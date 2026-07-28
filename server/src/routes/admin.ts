@@ -1,0 +1,168 @@
+import type { FastifyInstance } from 'fastify';
+import { config, paths } from '../config.js';
+import { requireAdmin } from './auth.js';
+import { badRequest, notFound } from '../util/errors.js';
+import { parseNameList } from '../util/names.js';
+import { deactivateUser, findByName, importUsers, listUsers, countUsers } from '../repos/users.js';
+import {
+  activeTransferCount,
+  listAllTransfers,
+  logEvent,
+  recipientUserIds,
+  requireTransfer,
+  setState,
+} from '../repos/transfers.js';
+import { totalStoredBytes } from '../repos/blobs.js';
+import { diskUsage } from '../services/storage.js';
+import { getSettings, updateSettings, type RuntimeSettings } from '../services/settings.js';
+import { sweep } from '../services/cleanup.js';
+import { notifyTransferGone } from '../services/notify.js';
+import { onlineUserNames } from '../ws/hub.js';
+import { findById } from '../repos/users.js';
+import { toUserView } from '../views.js';
+
+export default async function adminRoutes(app: FastifyInstance): Promise<void> {
+  // Every route in this scope needs the shared admin token.
+  app.addHook('preHandler', async (request) => requireAdmin(request));
+
+  /** Cheap endpoint the admin page calls to check the token before showing anything. */
+  app.post('/api/admin/verify', async () => ({ ok: true }));
+
+  app.get('/api/admin/overview', async () => {
+    const disk = diskUsage();
+    return {
+      storage: {
+        directory: paths.root,
+        uploadsDirectory: paths.uploads,
+        usedByTransfers: totalStoredBytes(),
+        diskFree: disk.freeBytes,
+        diskTotal: disk.totalBytes,
+      },
+      counts: {
+        users: countUsers(),
+        online: onlineUserNames().length,
+        activeTransfers: activeTransferCount(),
+      },
+      settings: getSettings(),
+      server: {
+        port: config.port,
+        chunkSizeMb: config.chunkSizeMb,
+        cleanupIntervalMinutes: config.cleanupIntervalMinutes,
+        orphanUploadHours: config.orphanUploadHours,
+      },
+    };
+  });
+
+  app.get('/api/admin/settings', async () => ({ settings: getSettings() }));
+
+  app.put('/api/admin/settings', async (request) => {
+    const body = (request.body ?? {}) as Partial<Record<keyof RuntimeSettings, unknown>>;
+    const patch: Partial<RuntimeSettings> = {};
+
+    if (body.retentionHours !== undefined) {
+      const n = Number(body.retentionHours);
+      if (!Number.isFinite(n) || n < 1 || n > 24 * 365) {
+        throw badRequest('Retention must be between 1 hour and one year.', 'bad_retention');
+      }
+      patch.retentionHours = Math.round(n);
+    }
+
+    if (body.maxUploadSize !== undefined) {
+      const n = Number(body.maxUploadSize);
+      if (!Number.isFinite(n) || n < 0) throw badRequest('Maximum file size must be 0 (no limit) or more.', 'bad_max_size');
+      patch.maxUploadSize = Math.round(n);
+    }
+
+    if (body.deleteAfterAllDownloaded !== undefined) {
+      patch.deleteAfterAllDownloaded = Boolean(body.deleteAfterAllDownloaded);
+    }
+
+    if (body.registrationMode !== undefined) {
+      const mode = String(body.registrationMode);
+      if (mode !== 'open' && mode !== 'list') throw badRequest('Unknown registration mode.', 'bad_mode');
+      patch.registrationMode = mode;
+    }
+
+    if (body.storageDir !== undefined) {
+      const dir = String(body.storageDir).trim();
+      if (!dir) throw badRequest('Storage directory cannot be empty.', 'bad_storage_dir');
+      patch.storageDir = dir;
+    }
+
+    const settings = updateSettings(patch);
+    logEvent('admin.settings', null, null, JSON.stringify(patch));
+    return {
+      settings,
+      // storageDir is only read at boot; tell the admin so they aren't surprised.
+      restartRequired: patch.storageDir !== undefined && patch.storageDir !== paths.root,
+    };
+  });
+
+  app.get('/api/admin/users', async () => {
+    const users = listUsers(true);
+    return {
+      users: users.map((u) => ({ ...toUserView(u), active: Boolean(u.active), createdAt: u.created_at })),
+    };
+  });
+
+  /** Paste a list (one name per line, or CSV with the name first). */
+  app.post('/api/admin/users/import', async (request) => {
+    const body = (request.body ?? {}) as { text?: unknown };
+    const text = typeof body.text === 'string' ? body.text : '';
+    if (!text.trim()) throw badRequest('Paste at least one name.', 'empty_import');
+
+    const { valid, invalid } = parseNameList(text);
+    if (valid.length === 0) {
+      return { added: [], existing: [], invalid };
+    }
+    const { added, existing } = importUsers(valid.map((v) => ({ value: v.value, key: v.key })));
+    logEvent('admin.users.import', null, null, `${added.length} added`);
+    return { added, existing, invalid };
+  });
+
+  app.delete('/api/admin/users/:name', async (request) => {
+    const { name } = request.params as { name: string };
+    const user = findByName(decodeURIComponent(name));
+    if (!user) throw notFound('No such user.', 'user_not_found');
+    deactivateUser(user.id);
+    logEvent('admin.users.remove', null, user.id);
+    return { ok: true };
+  });
+
+  app.get('/api/admin/transfers', async () => {
+    const rows = listAllTransfers();
+    return {
+      transfers: rows.map((row) => ({
+        id: row.id,
+        sender: row.sender_name,
+        note: row.note,
+        createdAt: row.created_at,
+        expiresAt: row.expires_at,
+        state: row.state,
+        totalSize: row.total_size,
+        fileCount: row.file_count,
+        recipientCount: row.recipient_count,
+      })),
+    };
+  });
+
+  /** Force-delete a transfer. Bytes go away on the next sweep (or right now). */
+  app.delete('/api/admin/transfers/:id', async (request) => {
+    const { id } = request.params as { id: string };
+    const transfer = requireTransfer(id);
+    const targets = recipientUserIds(id);
+
+    setState(id, 'deleted');
+    logEvent('admin.transfer.delete', id, null);
+    notifyTransferGone(id, 'revoked', findById(transfer.sender_id)?.name ?? '', targets);
+
+    const result = await sweep();
+    return { ok: true, sweep: result };
+  });
+
+  app.post('/api/admin/cleanup', async () => {
+    const result = await sweep();
+    logEvent('admin.cleanup', null, null, JSON.stringify(result));
+    return { sweep: result };
+  });
+}

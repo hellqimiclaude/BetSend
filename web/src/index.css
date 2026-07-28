@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
+  }
+
+  /* Consistent focus ring for keyboard users across the whole app. */
+  :focus-visible {
+    @apply outline outline-2 outline-offset-2 outline-brand-600;
+  }
+
+  /* Slim scrollbars so long lists don't feel heavy. */
+  * {
+    scrollbar-width: thin;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-slate-300 dark:bg-slate-700;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}

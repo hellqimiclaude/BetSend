@@ -1,0 +1,10 @@
+node_modules/
+dist/
+server/public/
+data/
+storage/
+*.log
+.DS_Store
+config.json
+.env
+*.tsbuildinfo

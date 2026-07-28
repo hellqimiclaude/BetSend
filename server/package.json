@@ -1,0 +1,32 @@
+{
+  "name": "@betsend/server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "start": "node dist/index.js",
+    "seed": "tsx src/seed.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.2",
+    "@tus/file-store": "^1.5.1",
+    "@tus/server": "^1.10.1",
+    "archiver": "^8.0.0",
+    "better-sqlite3": "^11.8.1",
+    "fastify": "^5.2.1",
+    "mime-types": "^2.1.35",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/mime-types": "^2.1.4",
+    "@types/node": "^22.10.7",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

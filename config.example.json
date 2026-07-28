@@ -1,0 +1,14 @@
+{
+  "port": 8080,
+  "host": "0.0.0.0",
+  "storageDir": "./data",
+  "adminToken": "please-change-this",
+  "retentionHours": 72,
+  "maxUploadSize": 0,
+  "deleteAfterAllDownloaded": true,
+  "registrationMode": "open",
+  "chunkSizeMb": 8,
+  "cleanupIntervalMinutes": 10,
+  "orphanUploadHours": 24,
+  "logLevel": "info"
+}
