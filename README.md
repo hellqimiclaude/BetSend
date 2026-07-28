@@ -26,7 +26,7 @@ at the same time.
 - [Importing your staff list](#importing-your-staff-list)
 - [Configuration](#configuration)
 - [How retention and cleanup work](#how-retention-and-cleanup-work)
-- [Running as a Windows service](#running-as-a-windows-service)
+- [How it runs in the background](#how-it-runs-in-the-background)
 - [Development](#development)
 - [Architecture](#architecture)
 - [Troubleshooting](#troubleshooting)
@@ -69,47 +69,73 @@ The server keeps its state in a single SQLite file — there is no database to i
 
 ## Quick start
 
-On the machine that will act as the server:
+### Windows
+
+1. Install **Node.js LTS** from <https://nodejs.org> (next, next, finish).
+2. Put the BetSend folder somewhere permanent — `C:\BetSend` is fine.
+3. Double-click **`Install BetSend.bat`** and approve the administrator prompt.
+
+That is the whole setup. The installer builds the app, generates an admin token, opens
+the firewall for private and domain networks only, registers BetSend to start with
+Windows, starts it, and then prints what you need:
+
+```
+  ────────────────────────────────────────────────
+   BetSend is set up.
+
+   Send this address round the office:
+     http://192.168.1.40:8080
+
+   Admin token (for the Admin page):
+     8CMIuFNhHYWIxXfQcak1
+     Also saved in config.json.
+
+   Next: open the address, go to Admin, paste in your staff list.
+  ────────────────────────────────────────────────
+```
+
+Send that address round the office. Nobody needs to install anything, and nobody needs
+to leave a window open — BetSend now runs in the background, comes back after a reboot,
+and restarts itself if it ever falls over.
+
+Options, if you want them:
+
+```powershell
+# Drop the ":8080" from the address, and keep files on the D: drive
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Port 80 -StorageDir D:\BetSendData
+```
+
+Re-run `Install BetSend.bat` any time after a `git pull` — it rebuilds and restarts, and
+keeps your existing `config.json` and all your files.
+
+### Linux
 
 ```bash
-git clone <this-repo> betsend
-cd betsend
-npm install
-npm run build
+sudo ./scripts/install.sh                                   # or: --port 80 --storage /srv/betsend
 ```
 
-Create a `config.json` next to `package.json` (copy `config.example.json` and edit it):
+Same thing via systemd: builds, configures, enables the `betsend` service and starts it.
 
-```json
-{
-  "port": 8080,
-  "storageDir": "D:/BetSendData",
-  "adminToken": "pick-something-only-you-know",
-  "retentionHours": 72
-}
-```
+### Just want a quick look first?
 
-Start it:
+Double-click **`Start BetSend.bat`** (or run `npm install && npm run build && npm start`).
+That runs BetSend in a window for as long as the window stays open — fine for trying it,
+not how you want to run it day to day.
 
-```bash
-npm start
-```
+Add `npm run seed` for ten made-up colleagues to click around with before the real staff
+list is imported.
 
-You will see something like:
+### Managing it afterwards
 
-```
-  BetSend is running. Colleagues can open:
-    http://192.168.1.40:8080
-```
+| Task    | Windows                                   | Linux                          |
+| ------- | ----------------------------------------- | ------------------------------ |
+| Restart | `Restart-ScheduledTask -TaskName BetSend` | `systemctl restart betsend`    |
+| Stop    | `Stop-ScheduledTask -TaskName BetSend`    | `systemctl stop betsend`       |
+| Logs    | `logs\betsend.log`                        | `journalctl -u betsend -f`     |
+| Remove  | `scripts\uninstall.ps1`                   | `sudo ./scripts/uninstall.sh`  |
 
-Send that URL round the office. That is the whole setup.
-
-> **Windows firewall:** the first time you start it, Windows will ask whether to allow
-> Node.js through the firewall. Tick **Private networks** and allow it — otherwise nobody
-> else can reach the server.
-
-To try it out with fake data first, run `npm run seed` — it adds ten made-up colleagues
-(J.Johnson, M.Smith, …) so you can click around before the real list is imported.
+Uninstalling leaves your files and database alone unless you ask for them to go
+(`-RemoveData` / `--remove-data`).
 
 ---
 
@@ -218,54 +244,58 @@ transfer referencing it is finished.
 
 ---
 
-## Running as a Windows service
+## How it runs in the background
 
-The server is a plain Node process, so any supervisor works. Two common options:
+`Install BetSend.bat` registers a **scheduled task** called `BetSend` that runs at startup
+as `SYSTEM`, so BetSend is up before anyone logs in and stays up after they log out.
 
-### Option A — NSSM (recommended; survives reboots and restarts on crash)
+The task does not launch Node directly — it launches `scripts\supervise.ps1`, a small
+wrapper that restarts the server whenever it exits and appends both output streams to
+`logs\betsend.log` (rotated at 20 MB). Task Scheduler on its own only restarts a task that
+*fails*; a process that exits cleanly would otherwise stay dead until someone noticed.
+Repeated fast crashes back off from 5 seconds up to 5 minutes, so a bad port or an
+unwritable storage directory cannot spin the CPU.
 
-1. Download NSSM from <https://nssm.cc/download> and unzip it.
-2. Open an **Administrator** command prompt and run:
+On Linux the equivalent is a systemd unit with `Restart=always`.
 
-   ```
-   nssm install BetSend
-   ```
+### Checking on it
 
-3. In the dialog:
-   - **Path:** `C:\Program Files\nodejs\node.exe`
-   - **Startup directory:** `C:\betsend` *(wherever you cloned it)*
-   - **Arguments:** `server\dist\index.js`
-4. On the **Details** tab set a display name like `BetSend file transfer`.
-5. On the **I/O** tab, point stdout and stderr at e.g. `C:\betsend\logs\betsend.log` so you
-   have something to read if it misbehaves.
-6. Click **Install service**, then start it:
+```powershell
+Get-ScheduledTask -TaskName BetSend         # is it registered?
+Get-Content logs\betsend.log -Tail 40       # what has it been doing?
+Restart-ScheduledTask -TaskName BetSend     # kick it
+```
 
-   ```
-   nssm start BetSend
-   ```
+### Things worth getting right
 
-Useful afterwards: `nssm restart BetSend`, `nssm stop BetSend`, `nssm edit BetSend`.
+- **Storage on a roomy drive.** `-StorageDir D:\BetSendData` at install time, or edit
+  `storageDir` in `config.json` and restart. It must be a **local** path — the service
+  runs as `SYSTEM`, which cannot see mapped network drives.
+- **The machine must not sleep.** Check **Power Options → Sleep → Never**. A sleeping
+  host is the most common cause of "BetSend is down".
+- **Port 80 makes the address friendlier** (`http://192.168.1.40` instead of
+  `…:8080`). Install with `-Port 80`. If IIS or another web server is already on 80, the
+  installer warns you before it gets that far.
 
-### Option B — Task Scheduler (no extra downloads)
+### A name instead of an IP address
 
-1. Open **Task Scheduler → Create Task**.
-2. **General:** give it a name, select *Run whether user is logged on or not*, and tick
-   *Run with highest privileges*.
-3. **Triggers:** New → *At startup*.
-4. **Actions:** New → Start a program
-   - **Program:** `C:\Program Files\nodejs\node.exe`
-   - **Arguments:** `server\dist\index.js`
-   - **Start in:** `C:\betsend`
-5. **Settings:** tick *If the task fails, restart every 1 minute*.
+`http://betsend` reads better than `http://192.168.1.40`, and it means the address in
+everyone's bookmarks survives the server changing IP.
 
-Task Scheduler will not restart the process if it exits cleanly, which is why NSSM is the
-better choice for something people rely on all day.
+- **With a domain / office DNS server:** add an A record `betsend` → the server's IP.
+- **On a small network:** give the machine a DHCP reservation on your router, then add a
+  host entry there if it supports one.
+- **Per machine, as a stopgap:** add `192.168.1.40  betsend` to
+  `C:\Windows\System32\drivers\etc\hosts`.
 
-### Either way
+Whichever you pick, install with `-Port 80` so nobody has to type a port number.
 
-- Put `storageDir` on a drive with room to spare (`"storageDir": "D:/BetSendData"`).
-- Set `adminToken` to something real before going live.
-- The machine must not sleep. Check **Power Options → Sleep → Never**.
+### Prefer NSSM?
+
+If your organisation already standardises on [NSSM](https://nssm.cc/download), it works
+just as well — point it at `node.exe` with `server\dist\index.js` as the argument and
+your BetSend folder as the startup directory, and skip the scheduled task. The installer
+is only there so nobody *has* to.
 
 ---
 
@@ -357,13 +387,19 @@ green dot next to a name is accurate rather than approximate.
 ## Troubleshooting
 
 **Nobody else can open the page.**
-Check the Windows firewall allows Node.js on private networks, that `host` is `0.0.0.0`
-(not `127.0.0.1`), and that colleagues are using the IP printed at startup rather than
+It works on the server itself but not from other desks — almost always the firewall.
+Re-run `Install BetSend.bat`, which adds the rule. Then check `host` is `0.0.0.0` (not
+`127.0.0.1`) in `config.json`, and that colleagues are using the machine's IP rather than
 `localhost`.
 
+**It was working, now nothing responds.**
+Check the machine is awake and the task is running:
+`Get-ScheduledTask -TaskName BetSend`. Then read the tail of `logs\betsend.log` — the
+supervisor records every exit and restart there with a timestamp.
+
 **"BetSend: the web interface has not been built yet."**
-Run `npm run build`, then restart. The server serves the compiled frontend from
-`server/public`.
+The build did not finish. Re-run `Install BetSend.bat` (or `npm run build`) — the server
+serves the compiled frontend from `server/public`.
 
 **An upload stalled.**
 It will resume by itself — tus retries with a backoff. If the tab was closed, re-adding the

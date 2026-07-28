@@ -8,3 +8,4 @@ storage/
 config.json
 .env
 *.tsbuildinfo
+logs/
