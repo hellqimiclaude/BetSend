@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { buildApp } from './app.js';
-import { config, ensureDirs, paths } from './config.js';
+import { config, configFilePath, ensureDirs, paths } from './config.js';
 import { getDb, closeDb } from './db/index.js';
 import { attachWebSocket } from './ws/hub.js';
 import { startCleanupLoop } from './services/cleanup.js';
@@ -30,6 +30,9 @@ async function main(): Promise<void> {
 
   app.log.info(
     {
+      // Which config file won, so a surprising setting is traceable.
+      config: configFilePath ?? '(none — defaults and environment only)',
+      database: config.dbPath,
       storage: paths.root,
       retentionHours: settings.retentionHours,
       deleteAfterAllDownloaded: settings.deleteAfterAllDownloaded,

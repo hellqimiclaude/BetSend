@@ -63,14 +63,38 @@ const DEFAULTS = {
   sessionDays: 30,
 };
 
+/** Absolute path of the config file that was loaded, for logging. */
+export let configFilePath: string | null = null;
+
+/**
+ * Find config.json by walking up from the working directory.
+ *
+ * Walking up matters: `npm run seed` executes inside the `server` workspace, so
+ * its cwd is `server/` while config.json lives at the repository root. Looking
+ * only at cwd meant the seed script quietly wrote to a different database than
+ * the server was reading.
+ */
 function readConfigFile(): Record<string, unknown> {
-  const explicit = process.env.CONFIG_FILE;
-  const candidates = explicit ? [explicit] : [path.resolve(process.cwd(), 'config.json')];
+  const candidates: string[] = [];
+
+  if (process.env.CONFIG_FILE) {
+    candidates.push(path.resolve(process.env.CONFIG_FILE));
+  } else {
+    let dir = process.cwd();
+    for (;;) {
+      candidates.push(path.join(dir, 'config.json'));
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+
   for (const candidate of candidates) {
     try {
-      if (fs.existsSync(candidate)) {
-        return JSON.parse(fs.readFileSync(candidate, 'utf8')) as Record<string, unknown>;
-      }
+      if (!fs.existsSync(candidate)) continue;
+      const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8')) as Record<string, unknown>;
+      configFilePath = candidate;
+      return parsed;
     } catch (err) {
       throw new Error(`Could not read config file ${candidate}: ${(err as Error).message}`);
     }

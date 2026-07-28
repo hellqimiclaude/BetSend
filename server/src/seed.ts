@@ -6,7 +6,7 @@
  * Every seeded account gets the same password, printed at the end. This is for
  * development only; never run it against a server people really use.
  */
-import { ensureDirs, config } from './config.js';
+import { ensureDirs, config, configFilePath } from './config.js';
 import { getDb, closeDb } from './db/index.js';
 import { findByName, importUsers, listUsers, setAdmin, setPassword } from './repos/users.js';
 import { validateName } from './util/names.js';
@@ -37,6 +37,11 @@ async function main(): Promise<void> {
 
   ensureDirs();
   getDb();
+
+  // Say which database is being written, so seeding the wrong one is obvious
+  // rather than mysterious.
+  console.log(`Config:   ${configFilePath ?? '(defaults and environment only)'}`);
+  console.log(`Database: ${config.dbPath}\n`);
 
   const parsed = NAMES.map((n) => validateName(n)).filter((r) => r.ok);
   const { added, existing } = importUsers(parsed.map((p) => ({ value: p.value, key: p.key })));
