@@ -1,25 +1,30 @@
-const STORAGE_KEY = 'betsend.user';
+const LAST_NAME_KEY = 'betsend.lastName';
 
-/** The chosen name is remembered so returning users skip the picker. */
-export function loadIdentity(): string | null {
+/**
+ * The signed-in identity lives in an httpOnly cookie the browser handles for
+ * us. All we keep here is the last name typed at the sign-in screen, so a
+ * returning colleague only has to enter their password.
+ */
+
+export function rememberedName(): string {
   try {
-    return localStorage.getItem(STORAGE_KEY);
+    return localStorage.getItem(LAST_NAME_KEY) ?? '';
   } catch {
-    return null;
+    return '';
   }
 }
 
-export function saveIdentity(name: string): void {
+export function rememberName(name: string): void {
   try {
-    localStorage.setItem(STORAGE_KEY, name);
+    localStorage.setItem(LAST_NAME_KEY, name);
   } catch {
-    /* ignore — the user will just be asked again next time */
+    /* private browsing — they will just type it again */
   }
 }
 
-export function clearIdentity(): void {
+export function forgetName(): void {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LAST_NAME_KEY);
   } catch {
     /* ignore */
   }

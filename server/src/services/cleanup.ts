@@ -15,6 +15,7 @@ import { listStrayFiles, removeBlobFiles, removeStrayFile } from './storage.js';
 import { getSettings } from './settings.js';
 import { notifyTransferGone } from './notify.js';
 import { findById } from '../repos/users.js';
+import { purgeExpiredSessions } from './sessions.js';
 
 export interface SweepResult {
   expired: number;
@@ -23,6 +24,7 @@ export interface SweepResult {
   deletedBlobs: number;
   freedBytes: number;
   strayFiles: number;
+  expiredSessions: number;
 }
 
 /**
@@ -34,6 +36,7 @@ export interface SweepResult {
  *  4. blobs whose ref_count hit 0                   -> unlink from disk
  *  5. finished uploads never attached to a transfer -> unlink after orphanUploadHours
  *  6. files on disk with no blob row at all         -> unlink after orphanUploadHours
+ *  7. sessions past their expiry                    -> deleted
  */
 export async function sweep(): Promise<SweepResult> {
   const settings = getSettings();
@@ -44,6 +47,7 @@ export async function sweep(): Promise<SweepResult> {
     deletedBlobs: 0,
     freedBytes: 0,
     strayFiles: 0,
+    expiredSessions: 0,
   };
 
   // 1 — expiry
@@ -99,6 +103,9 @@ export async function sweep(): Promise<SweepResult> {
     await removeStrayFile(entry);
     result.strayFiles++;
   }
+
+  // 7 — logins that have run out
+  result.expiredSessions = purgeExpiredSessions();
 
   return result;
 }

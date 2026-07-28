@@ -13,8 +13,8 @@ import {
   LoadingState,
   SectionTitle,
 } from '../components/ui';
-import { IconLock, IconRefresh, IconTrash, IconUsers } from '../components/Icons';
-import type { AdminOverview, AdminTransfer, AdminUserView, RuntimeSettings } from '../types';
+import { IconLock, IconRefresh, IconTrash, IconUsers, IconX } from '../components/Icons';
+import type { AdminOverview, AdminTransfer, AdminUserView, RuntimeSettings, SetupLink } from '../types';
 
 const TOKEN_KEY = 'betsend.adminToken';
 
@@ -28,12 +28,18 @@ function readToken(): string | null {
 }
 
 export function AdminView() {
+  const { user } = useApp();
   const [token, setToken] = useState<string | null>(() => readToken());
+
+  // An account flagged as an admin is authorised by its own session, so it
+  // never sees the token prompt. The shared token stays as the way in before
+  // any admin account exists.
+  const isAccountAdmin = Boolean(user?.isAdmin);
 
   // Registered during render rather than in an effect: the panel's first
   // request is fired from a child effect, which runs *before* a parent effect
   // would have set the header. Reloading straight onto #/admin used to 403.
-  setAdminToken(token);
+  setAdminToken(isAccountAdmin ? null : token);
 
   // Leaving the page drops the token from outgoing requests.
   useEffect(() => () => setAdminToken(null), []);
@@ -57,8 +63,8 @@ export function AdminView() {
     setToken(null);
   }
 
-  if (!token) return <TokenGate onUnlock={unlock} />;
-  return <AdminPanel onLock={lock} />;
+  if (!isAccountAdmin && !token) return <TokenGate onUnlock={unlock} />;
+  return <AdminPanel onLock={isAccountAdmin ? null : lock} />;
 }
 
 function TokenGate({ onUnlock }: { onUnlock: (token: string) => void }) {
@@ -117,7 +123,7 @@ function TokenGate({ onUnlock }: { onUnlock: (token: string) => void }) {
   );
 }
 
-function AdminPanel({ onLock }: { onLock: () => void }) {
+function AdminPanel({ onLock }: { onLock: (() => void) | null }) {
   const { toast, refreshUsers, bootstrap } = useApp();
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [users, setUsers] = useState<AdminUserView[]>([]);
@@ -160,15 +166,18 @@ function AdminPanel({ onLock }: { onLock: () => void }) {
           <Button variant="ghost" icon={<IconRefresh className="h-4 w-4" />} onClick={() => void load()}>
             {t('error.retry')}
           </Button>
-          <Button variant="ghost" onClick={onLock}>
-            {t('admin.lock')}
-          </Button>
+          {onLock ? (
+            <Button variant="ghost" onClick={onLock}>
+              {t('admin.lock')}
+            </Button>
+          ) : null}
         </div>
       </header>
 
       <StatsGrid overview={overview} />
       <SettingsForm
         initial={overview.settings}
+        publicMode={overview.security.publicMode}
         onSaved={(settings, restartRequired) => {
           setOverview({ ...overview, settings });
           toast('success', restartRequired ? t('admin.restartNeeded') : t('admin.saved'));
@@ -231,6 +240,8 @@ function StatsGrid({ overview }: { overview: AdminOverview }) {
     },
   ];
 
+  const notSetUp = overview.counts.withoutPassword;
+
   const usedFraction =
     overview.storage.diskTotal > 0
       ? (overview.storage.diskTotal - overview.storage.diskFree) / overview.storage.diskTotal
@@ -239,6 +250,13 @@ function StatsGrid({ overview }: { overview: AdminOverview }) {
   return (
     <Card className="p-4">
       <SectionTitle hint={overview.storage.directory}>{t('admin.storage')}</SectionTitle>
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        <Badge tone={overview.security.publicMode ? 'amber' : 'green'}>
+          {overview.security.publicMode ? t('admin.publicMode') : t('admin.lanMode')}
+        </Badge>
+        {notSetUp > 0 ? <Badge tone="slate">{t('admin.withoutPassword', { count: notSetUp })}</Badge> : null}
+      </div>
       <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {stats.map((stat) => (
           <div key={stat.label}>
@@ -263,10 +281,12 @@ function StatsGrid({ overview }: { overview: AdminOverview }) {
 
 function SettingsForm({
   initial,
+  publicMode,
   onSaved,
   onError,
 }: {
   initial: RuntimeSettings;
+  publicMode: boolean;
   onSaved: (settings: RuntimeSettings, restartRequired: boolean) => void;
   onError: (message: string) => void;
 }) {
@@ -337,6 +357,26 @@ function SettingsForm({
         </label>
 
         <label className="block">
+          <span className="mb-1 block text-sm font-medium">{t('admin.signupMode')}</span>
+          <select
+            value={form.signupMode}
+            disabled={publicMode}
+            onChange={(event) =>
+              setForm({ ...form, signupMode: event.target.value as RuntimeSettings['signupMode'] })
+            }
+            className={classNames(inputClass, publicMode && 'opacity-60')}
+          >
+            <option value="invite">{t('admin.signupInvite')}</option>
+            <option value="claim">{t('admin.signupClaim')}</option>
+          </select>
+          {publicMode ? (
+            <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">
+              {t('admin.signupClaimBlocked')}
+            </span>
+          ) : null}
+        </label>
+
+        <label className="block">
           <span className="mb-1 block text-sm font-medium">{t('admin.directory')}</span>
           <input
             value={form.storageDir}
@@ -377,7 +417,37 @@ function UsersSection({
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [link, setLink] = useState<SetupLink | null>(null);
   const active = users.filter((user) => user.active);
+
+  /** Generate a one-time link. It is only ever shown here, once. */
+  async function makeLink(name: string) {
+    try {
+      setLink(await api.post<SetupLink>(`/api/admin/users/${encodeURIComponent(name)}/setup-link`));
+      onChanged();
+    } catch (err) {
+      onMessage('error', (err as ApiError).message);
+    }
+  }
+
+  async function toggleAdmin(name: string, isAdmin: boolean) {
+    try {
+      await api.post(`/api/admin/users/${encodeURIComponent(name)}/admin`, { isAdmin });
+      onChanged();
+    } catch (err) {
+      onMessage('error', (err as ApiError).message);
+    }
+  }
+
+  async function signOutUser(name: string) {
+    try {
+      await api.post(`/api/admin/users/${encodeURIComponent(name)}/sign-out`);
+      onMessage('success', t('admin.signedOutUser', { name }));
+      onChanged();
+    } catch (err) {
+      onMessage('error', (err as ApiError).message);
+    }
+  }
 
   async function importNames() {
     setBusy(true);
@@ -435,7 +505,7 @@ function UsersSection({
       ) : (
         <ul className="divide-y divide-slate-100 dark:divide-slate-800">
           {active.map((user) => (
-            <li key={user.name} className="flex items-center gap-3 py-2">
+            <li key={user.name} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
               <span
                 className={classNames(
                   'h-1.5 w-1.5 shrink-0 rounded-full',
@@ -443,10 +513,39 @@ function UsersSection({
                 )}
               />
               <span className="min-w-0 flex-1 truncate text-sm">{user.name}</span>
-              <span className="hidden shrink-0 text-xs text-slate-400 sm:block">
-                {user.lastSeenAt ? formatWhen(user.lastSeenAt) : '—'}
-              </span>
-              <Badge tone="slate">{user.source}</Badge>
+
+              {!user.hasPassword ? (
+                <Badge tone="amber">{t('admin.notSetUp')}</Badge>
+              ) : (
+                <span className="hidden shrink-0 text-xs text-slate-400 sm:block">
+                  {user.lastSeenAt ? formatWhen(user.lastSeenAt) : '—'}
+                </span>
+              )}
+              {user.isAdmin ? <Badge tone="green">admin</Badge> : null}
+
+              <Button
+                variant="ghost"
+                className="shrink-0 px-2 py-1 text-xs"
+                onClick={() => void makeLink(user.name)}
+              >
+                {user.hasPassword ? t('admin.resetLink') : t('admin.setupLink')}
+              </Button>
+              <Button
+                variant="ghost"
+                className="shrink-0 px-2 py-1 text-xs"
+                onClick={() => void toggleAdmin(user.name, !user.isAdmin)}
+              >
+                {user.isAdmin ? t('admin.removeAdmin') : t('admin.makeAdmin')}
+              </Button>
+              {user.activeSessions > 0 ? (
+                <Button
+                  variant="ghost"
+                  className="shrink-0 px-2 py-1 text-xs"
+                  onClick={() => void signOutUser(user.name)}
+                >
+                  {t('admin.signOutUser')}
+                </Button>
+              ) : null}
               <Button
                 variant="ghost"
                 className="shrink-0 px-2 py-1"
@@ -459,6 +558,50 @@ function UsersSection({
           ))}
         </ul>
       )}
+
+      {link ? (
+        <div className="mt-4 rounded-lg bg-brand-50 p-4 ring-1 ring-brand-100 dark:bg-brand-950/40 dark:ring-brand-900/60">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">{t('admin.linkTitle', { name: link.name })}</p>
+              <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
+                {t('admin.linkBody', { hours: link.expiresInHours })}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setLink(null)}
+              aria-label="Dismiss"
+              className="shrink-0 rounded p-1 text-slate-400 transition hover:bg-white/60 dark:hover:bg-slate-800"
+            >
+              <IconX className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="mt-3 flex gap-2">
+            <input
+              readOnly
+              value={link.link}
+              onFocus={(event) => event.currentTarget.select()}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-xs dark:border-slate-700 dark:bg-slate-950"
+            />
+            <Button
+              variant="secondary"
+              className="shrink-0"
+              onClick={() => {
+                void navigator.clipboard?.writeText(link.link);
+                onMessage('success', t('admin.copied'));
+              }}
+            >
+              {t('admin.copy')}
+            </Button>
+          </div>
+
+          {link.needsPublicUrl ? (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">{t('admin.linkNeedsUrl')}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       <ConfirmDialog
         open={removing !== null}

@@ -8,8 +8,8 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api, ApiError, setIdentity } from '../lib/api';
-import { clearIdentity, loadIdentity, saveIdentity } from '../lib/identity';
+import { api, ApiError, setAdminToken, setSignedOutHandler } from '../lib/api';
+import { forgetName, rememberName } from '../lib/identity';
 import { LiveConnection } from '../lib/ws';
 import { applyTheme, isDark, storedTheme, watchSystemTheme, type Theme } from '../lib/theme';
 import { t } from '../i18n';
@@ -39,8 +39,9 @@ interface AppState {
   /** Whether dark styling is currently applied (resolves `system`). */
   dark: boolean;
 
-  claim: (name: string) => Promise<void>;
-  switchUser: () => void;
+  signIn: (name: string, password: string) => Promise<void>;
+  completeSetup: (input: { token?: string; name?: string; password: string }) => Promise<void>;
+  signOut: () => Promise<void>;
   refreshUsers: () => Promise<void>;
   refreshInbox: () => Promise<void>;
   refreshSent: () => Promise<void>;
@@ -112,10 +113,10 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 
   useEffect(() => {
     let cancelled = false;
-    const remembered = loadIdentity();
-    setIdentity(remembered);
     setBootError(null);
 
+    // The session cookie decides whether we are signed in — bootstrap simply
+    // reports what the server sees.
     api
       .get<Bootstrap>('/api/bootstrap')
       .then((data) => {
@@ -124,12 +125,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
         if (data.user) {
           setUser(data.user);
           setUnread(data.unread);
-          saveIdentity(data.user.name);
-          setIdentity(data.user.name);
-        } else if (remembered) {
-          // The name was removed from the directory while we were away.
-          clearIdentity();
-          setIdentity(null);
+          rememberName(data.user.name);
         }
         setReady(true);
       })
@@ -143,6 +139,17 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       cancelled = true;
     };
   }, [bootNonce]);
+
+  /** A revoked or expired session anywhere drops us back to the sign-in screen. */
+  useEffect(() => {
+    setSignedOutHandler(() => {
+      setUser(null);
+      setInbox([]);
+      setSent([]);
+      setUnread(0);
+    });
+    return () => setSignedOutHandler(null);
+  }, []);
 
   const retryBoot = useCallback(() => {
     setReady(false);
@@ -201,28 +208,37 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 
   // ---- identity ----------------------------------------------------------
 
-  const claim = useCallback(
-    async (name: string) => {
-      setIdentity(name);
-      try {
-        const data = await api.post<{ user: UserView; unread: number }>('/api/users/claim', { name });
-        saveIdentity(data.user.name);
-        setIdentity(data.user.name);
-        setUser(data.user);
-        setUnread(data.unread);
-      } catch (error) {
-        setIdentity(loadIdentity());
-        throw error;
-      }
+  const adopt = useCallback((data: { user: UserView; unread: number }) => {
+    rememberName(data.user.name);
+    setUser(data.user);
+    setUnread(data.unread);
+  }, []);
+
+  const signIn = useCallback(
+    async (name: string, password: string) => {
+      adopt(await api.post<{ user: UserView; unread: number }>('/api/session', { name, password }));
     },
-    [],
+    [adopt],
   );
 
-  const switchUser = useCallback(() => {
+  const completeSetup = useCallback(
+    async (input: { token?: string; name?: string; password: string }) => {
+      adopt(await api.post<{ user: UserView; unread: number }>('/api/setup', input));
+    },
+    [adopt],
+  );
+
+  const signOut = useCallback(async () => {
     liveRef.current?.close();
     liveRef.current = null;
-    clearIdentity();
-    setIdentity(null);
+    try {
+      await api.del('/api/session');
+    } catch {
+      // Even if the server never heard us, clear locally — the cookie is gone
+      // from this browser's point of view either way.
+    }
+    setAdminToken(null);
+    forgetName();
     setUser(null);
     setInbox([]);
     setSent([]);
@@ -287,7 +303,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
   useEffect(() => {
     if (!user) return;
 
-    const live = new LiveConnection(user.name);
+    const live = new LiveConnection();
     liveRef.current = live;
     const offEvent = live.on((event) => handleEventRef.current(event));
     const offStatus = live.onStatus(setConnected);
@@ -335,8 +351,9 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       toasts,
       theme,
       dark,
-      claim,
-      switchUser,
+      signIn,
+      completeSetup,
+      signOut,
       refreshUsers,
       refreshInbox,
       refreshSent,
@@ -362,8 +379,9 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       toasts,
       theme,
       dark,
-      claim,
-      switchUser,
+      signIn,
+      completeSetup,
+      signOut,
       refreshUsers,
       refreshInbox,
       refreshSent,

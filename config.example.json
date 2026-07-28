@@ -10,5 +10,11 @@
   "chunkSizeMb": 8,
   "cleanupIntervalMinutes": 10,
   "orphanUploadHours": 24,
-  "logLevel": "info"
+  "sessionDays": 30,
+  "logLevel": "info",
+
+  "_comment_public": "Uncomment the three below only when BetSend sits behind a reverse proxy with HTTPS. Set host to 127.0.0.1 at the same time so the app cannot be reached without TLS.",
+  "_publicMode": true,
+  "_behindProxy": true,
+  "_publicUrl": "https://files.example.com"
 }

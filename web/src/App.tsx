@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useApp } from './state/AppContext';
 import { Sidebar } from './components/Sidebar';
 import { Toasts } from './components/Toasts';
-import { Onboarding } from './views/Onboarding';
+import { SignIn } from './views/SignIn';
+import { SetPassword } from './views/SetPassword';
 import { SendView } from './views/SendView';
 import { InboxView } from './views/InboxView';
 import { SentView } from './views/SentView';
@@ -16,24 +17,55 @@ export type View = 'send' | 'inbox' | 'sent' | 'admin';
 const VIEWS: View[] = ['send', 'inbox', 'sent', 'admin'];
 
 function viewFromHash(): View {
-  const hash = window.location.hash.replace(/^#\/?/, '');
+  const hash = window.location.hash.replace(/^#\/?/, '').split('?')[0];
   return (VIEWS as string[]).includes(hash) ? (hash as View) : 'send';
+}
+
+interface AuthRoute {
+  screen: 'signin' | 'setup';
+  token: string | null;
+}
+
+/** Setup links look like `#/setup?token=…`, so the token survives a refresh. */
+function authFromHash(): AuthRoute {
+  const raw = window.location.hash.replace(/^#\/?/, '');
+  const [path, query] = raw.split('?');
+  if (path === 'setup') {
+    return { screen: 'setup', token: new URLSearchParams(query ?? '').get('token') };
+  }
+  return { screen: 'signin', token: null };
 }
 
 export function App() {
   const { ready, bootError, user, retryBoot } = useApp();
   const [view, setView] = useState<View>(() => viewFromHash());
+  const [auth, setAuth] = useState<AuthRoute>(() => authFromHash());
 
   // Hash routing keeps the current screen across a refresh, no router needed.
   useEffect(() => {
-    const onHashChange = () => setView(viewFromHash());
+    const onHashChange = () => {
+      setView(viewFromHash());
+      setAuth(authFromHash());
+    };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
+  // Once signed in, drop a spent setup link out of the address bar.
+  useEffect(() => {
+    if (user && window.location.hash.startsWith('#/setup')) {
+      window.location.hash = '/send';
+    }
+  }, [user]);
+
   function navigate(next: View) {
     window.location.hash = `/${next}`;
     setView(next);
+  }
+
+  function goAuth(screen: AuthRoute['screen']) {
+    window.location.hash = screen === 'setup' ? '/setup' : '/signin';
+    setAuth({ screen, token: null });
   }
 
   if (!ready) {
@@ -54,7 +86,13 @@ export function App() {
     );
   }
 
-  if (!user) return <Onboarding />;
+  if (!user) {
+    // A setup link points at #/setup?token=… — honour it before the sign-in form.
+    if (auth.screen === 'setup') {
+      return <SetPassword token={auth.token} onBack={() => goAuth('signin')} />;
+    }
+    return <SignIn onNeedSetup={() => goAuth('setup')} />;
+  }
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">

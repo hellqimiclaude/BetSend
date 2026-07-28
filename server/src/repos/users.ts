@@ -9,6 +9,10 @@ export interface UserRow {
   created_at: number;
   last_seen_at: number | null;
   active: number;
+  /** Null until the person has set a password — they cannot sign in yet. */
+  password_hash: string | null;
+  password_set_at: number | null;
+  is_admin: number;
 }
 
 export function findByName(raw: string): UserRow | undefined {
@@ -97,5 +101,23 @@ export function touchLastSeen(id: number): void {
 
 export function countUsers(): number {
   const row = getDb().prepare('SELECT COUNT(*) AS n FROM users WHERE active = 1').get() as { n: number };
+  return row.n;
+}
+
+export function setPassword(id: number, passwordHash: string): void {
+  getDb()
+    .prepare('UPDATE users SET password_hash = ?, password_set_at = ? WHERE id = ?')
+    .run(passwordHash, now(), id);
+}
+
+export function setAdmin(id: number, isAdmin: boolean): void {
+  getDb().prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(isAdmin ? 1 : 0, id);
+}
+
+/** How many people have not finished setting up an account yet. */
+export function countWithoutPassword(): number {
+  const row = getDb()
+    .prepare('SELECT COUNT(*) AS n FROM users WHERE active = 1 AND password_hash IS NULL')
+    .get() as { n: number };
   return row.n;
 }

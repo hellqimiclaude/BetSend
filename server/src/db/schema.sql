@@ -1,13 +1,36 @@
 -- BetSend schema. Applied on every boot; all statements are idempotent.
 
 CREATE TABLE IF NOT EXISTS users (
-  id           INTEGER PRIMARY KEY,
-  name         TEXT    NOT NULL,           -- canonical display form, e.g. "J.Johnson"
-  name_key     TEXT    NOT NULL UNIQUE,    -- lowercased, for case-insensitive uniqueness
-  source       TEXT    NOT NULL DEFAULT 'self',  -- 'self' | 'admin'
+  id              INTEGER PRIMARY KEY,
+  name            TEXT    NOT NULL,        -- canonical display form, e.g. "J.Johnson"
+  name_key        TEXT    NOT NULL UNIQUE, -- lowercased, for case-insensitive uniqueness
+  source          TEXT    NOT NULL DEFAULT 'self',  -- 'self' | 'admin'
+  created_at      INTEGER NOT NULL,
+  last_seen_at    INTEGER,
+  active          INTEGER NOT NULL DEFAULT 1,
+  password_hash   TEXT,                    -- null until the person sets one
+  password_set_at INTEGER,
+  is_admin        INTEGER NOT NULL DEFAULT 0
+);
+
+-- Server-side sessions, so a login can be revoked centrally (a lost laptop
+-- should not stay signed in for a month).
+CREATE TABLE IF NOT EXISTS sessions (
+  id           TEXT    PRIMARY KEY,        -- sha256 of the cookie value
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at   INTEGER NOT NULL,
-  last_seen_at INTEGER,
-  active       INTEGER NOT NULL DEFAULT 1
+  last_seen_at INTEGER NOT NULL,
+  expires_at   INTEGER NOT NULL,
+  user_agent   TEXT
+);
+
+-- One-time links that let a person set their first password, or reset it.
+CREATE TABLE IF NOT EXISTS setup_tokens (
+  id         TEXT    PRIMARY KEY,          -- sha256 of the token in the URL
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at    INTEGER
 );
 
 -- One row = one physical copy of bytes on disk. Bulk sends reference the same
@@ -76,3 +99,6 @@ CREATE INDEX IF NOT EXISTS idx_transfers_state     ON transfers(state, expires_a
 CREATE INDEX IF NOT EXISTS idx_transfer_files_blob ON transfer_files(blob_id);
 CREATE INDEX IF NOT EXISTS idx_blobs_state         ON blobs(state, ref_count);
 CREATE INDEX IF NOT EXISTS idx_events_ts           ON events(ts);
+CREATE INDEX IF NOT EXISTS idx_sessions_user       ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expiry     ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_setup_tokens_user   ON setup_tokens(user_id);

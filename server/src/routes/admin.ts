@@ -3,7 +3,21 @@ import { config, paths } from '../config.js';
 import { requireAdmin } from './auth.js';
 import { badRequest, notFound } from '../util/errors.js';
 import { parseNameList } from '../util/names.js';
-import { deactivateUser, findByName, importUsers, listUsers, countUsers } from '../repos/users.js';
+import {
+  countUsers,
+  countWithoutPassword,
+  deactivateUser,
+  findByName,
+  importUsers,
+  listUsers,
+  setAdmin,
+} from '../repos/users.js';
+import {
+  createSetupToken,
+  destroyAllSessionsFor,
+  sessionCountFor,
+  setupLinkFor,
+} from '../services/sessions.js';
 import {
   activeTransferCount,
   listAllTransfers,
@@ -42,6 +56,12 @@ export default async function adminRoutes(app: FastifyInstance): Promise<void> {
         users: countUsers(),
         online: onlineUserNames().length,
         activeTransfers: activeTransferCount(),
+        withoutPassword: countWithoutPassword(),
+      },
+      security: {
+        publicMode: config.publicMode,
+        behindProxy: config.behindProxy,
+        publicUrl: config.publicUrl,
       },
       settings: getSettings(),
       server: {
@@ -83,6 +103,18 @@ export default async function adminRoutes(app: FastifyInstance): Promise<void> {
       patch.registrationMode = mode;
     }
 
+    if (body.signupMode !== undefined) {
+      const mode = String(body.signupMode);
+      if (mode !== 'invite' && mode !== 'claim') throw badRequest('Unknown sign-up mode.', 'bad_signup_mode');
+      if (mode === 'claim' && config.publicMode) {
+        throw badRequest(
+          'Self-service sign-up cannot be turned on while BetSend is reachable from the internet — anyone could claim a colleague\'s name. Send setup links instead.',
+          'claim_blocked_in_public_mode',
+        );
+      }
+      patch.signupMode = mode;
+    }
+
     if (body.storageDir !== undefined) {
       const dir = String(body.storageDir).trim();
       if (!dir) throw badRequest('Storage directory cannot be empty.', 'bad_storage_dir');
@@ -101,8 +133,59 @@ export default async function adminRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/admin/users', async () => {
     const users = listUsers(true);
     return {
-      users: users.map((u) => ({ ...toUserView(u), active: Boolean(u.active), createdAt: u.created_at })),
+      users: users.map((u) => ({
+        ...toUserView(u),
+        active: Boolean(u.active),
+        createdAt: u.created_at,
+        passwordSetAt: u.password_set_at,
+        activeSessions: sessionCountFor(u.id),
+      })),
     };
+  });
+
+  /**
+   * Generate a one-time link that lets someone set their first password (or
+   * reset a forgotten one). The link is shown once — the server only keeps its
+   * hash — so the admin copies it and sends it on however they like.
+   */
+  app.post('/api/admin/users/:name/setup-link', async (request) => {
+    const { name } = request.params as { name: string };
+    const user = findByName(decodeURIComponent(name));
+    if (!user || !user.active) throw notFound('No such user.', 'user_not_found');
+
+    const token = createSetupToken(user.id);
+    logEvent('admin.setup_link', null, user.id);
+
+    return {
+      name: user.name,
+      link: setupLinkFor(token),
+      // Without a configured public URL the admin has to prefix their own host.
+      needsPublicUrl: !config.publicUrl,
+      expiresInHours: 72,
+      isReset: Boolean(user.password_hash),
+    };
+  });
+
+  /** Force someone out of every browser they are signed in on. */
+  app.post('/api/admin/users/:name/sign-out', async (request) => {
+    const { name } = request.params as { name: string };
+    const user = findByName(decodeURIComponent(name));
+    if (!user) throw notFound('No such user.', 'user_not_found');
+
+    destroyAllSessionsFor(user.id);
+    logEvent('admin.sign_out', null, user.id);
+    return { ok: true };
+  });
+
+  app.post('/api/admin/users/:name/admin', async (request) => {
+    const { name } = request.params as { name: string };
+    const body = (request.body ?? {}) as { isAdmin?: unknown };
+    const user = findByName(decodeURIComponent(name));
+    if (!user || !user.active) throw notFound('No such user.', 'user_not_found');
+
+    setAdmin(user.id, Boolean(body.isAdmin));
+    logEvent('admin.role', null, user.id, Boolean(body.isAdmin) ? 'granted' : 'revoked');
+    return { ok: true };
   });
 
   /** Paste a list (one name per line, or CSV with the name first). */
@@ -125,6 +208,8 @@ export default async function adminRoutes(app: FastifyInstance): Promise<void> {
     const user = findByName(decodeURIComponent(name));
     if (!user) throw notFound('No such user.', 'user_not_found');
     deactivateUser(user.id);
+    // Removing someone must sign them out too, or their cookie keeps working.
+    destroyAllSessionsFor(user.id);
     logEvent('admin.users.remove', null, user.id);
     return { ok: true };
   });

@@ -1,0 +1,52 @@
+# Caddy reverse proxy for a public BetSend.
+#
+#   1. Point a DNS A record at this server.
+#   2. Replace files.example.com below with that name.
+#   3. sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+#
+# Caddy obtains and renews the TLS certificate on its own — there is nothing to
+# configure for HTTPS and no renewal cron to forget about.
+
+files.example.com {
+	# BetSend itself listens on plain HTTP, bound to localhost only.
+	reverse_proxy 127.0.0.1:8080 {
+		# Large uploads are streamed; do not let the proxy buffer them to disk.
+		flush_interval -1
+	}
+
+	# tus sends 10 GB in 8 MB chunks over one long-lived connection, and a
+	# recipient may be pulling a multi-gigabyte zip. The defaults are far too
+	# eager to cut those off.
+	request_body {
+		max_size 0
+	}
+
+	timeouts {
+		read_body 6h
+		write 6h
+		idle 10m
+	}
+
+	encode zstd gzip
+
+	log {
+		output file /var/log/caddy/betsend.log {
+			roll_size 20MiB
+			roll_keep 5
+		}
+	}
+}
+
+# --- notes -------------------------------------------------------------------
+#
+# With this in front, run BetSend with:
+#
+#   PUBLIC_MODE=1
+#   PUBLIC_URL=https://files.example.com
+#   HOST=127.0.0.1          <- important: do not bind 0.0.0.0 behind a proxy
+#
+# or the equivalent in config.json. PUBLIC_MODE turns on Secure cookies, HSTS
+# and proxy-aware client IPs (so rate limiting sees the real visitor, not Caddy).
+#
+# Binding BetSend to 127.0.0.1 means the only way in is through Caddy — nobody
+# can skip TLS by hitting port 8080 directly.

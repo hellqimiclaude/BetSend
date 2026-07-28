@@ -12,7 +12,7 @@ const NAV: { view: View; label: string; icon: typeof IconUpload }[] = [
 ];
 
 export function Sidebar({ view, onNavigate }: { view: View; onNavigate: (view: View) => void }) {
-  const { user, unread, connected, dark, setTheme, switchUser } = useApp();
+  const { user, unread, connected, dark, setTheme, signOut } = useApp();
 
   return (
     <nav className="flex shrink-0 flex-col gap-1 border-b border-slate-200 bg-white px-3 py-3 dark:border-slate-800 dark:bg-slate-900 md:h-screen md:w-60 md:border-b-0 md:border-r md:py-5">
@@ -70,13 +70,20 @@ export function Sidebar({ view, onNavigate }: { view: View; onNavigate: (view: V
             {t('nav.offline')}
           </p>
         ) : null}
-        <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{user?.name}</p>
+        <div className="flex items-center gap-1.5">
+          <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{user?.name}</p>
+          {user?.isAdmin ? (
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+              {t('nav.admin.badge')}
+            </span>
+          ) : null}
+        </div>
         <button
           type="button"
-          onClick={switchUser}
+          onClick={() => void signOut()}
           className="mt-0.5 text-xs text-slate-500 underline-offset-2 transition hover:text-brand-600 hover:underline dark:text-slate-400"
         >
-          {t('nav.switchUser')}
+          {t('nav.signOut')}
         </button>
       </div>
     </nav>

@@ -1,37 +1,67 @@
 import type { FastifyRequest } from 'fastify';
 import { config } from '../config.js';
-import { findByName, touchLastSeen, type UserRow } from '../repos/users.js';
+import { touchLastSeen, type UserRow } from '../repos/users.js';
 import { forbidden, unauthorized } from '../util/errors.js';
+import { COOKIE_NAME, resolveSession } from '../services/sessions.js';
+import { ADMIN_LIMIT, hit } from '../services/ratelimit.js';
 
 /**
- * There are no passwords — this is a trusted LAN tool. The browser sends the
- * identity the user picked in `X-User`; the server only checks that the name is
- * a known, active user. Admin routes additionally require the shared token.
+ * Identity comes from a signed-in session cookie.
+ *
+ * Downloads are plain <a> navigations, which cannot carry headers — the cookie
+ * travels with them automatically, which is why identity lives there rather
+ * than in a header or a query parameter.
  */
-export function currentUser(request: FastifyRequest): UserRow {
-  const header = request.headers['x-user'];
-  const name = Array.isArray(header) ? header[0] : header;
-  const fromQuery = (request.query as Record<string, string> | undefined)?.user;
-  const candidate = (name || fromQuery || '').trim();
+export function sessionToken(request: FastifyRequest): string | undefined {
+  const cookies = (request as FastifyRequest & { cookies?: Record<string, string> }).cookies;
+  return cookies?.[COOKIE_NAME];
+}
 
-  if (!candidate) {
-    throw unauthorized('Please choose who you are first.', 'no_identity');
-  }
-  const user = findByName(candidate);
-  if (!user || !user.active) {
-    throw unauthorized('That name is not in the directory any more. Please pick your name again.', 'unknown_identity');
+/** The signed-in user, or null. Use when being signed out is a valid state. */
+export function optionalUser(request: FastifyRequest): UserRow | null {
+  const resolved = resolveSession(sessionToken(request));
+  return resolved ? resolved.user : null;
+}
+
+/** The signed-in user, or a 401 the browser turns into "please sign in". */
+export function currentUser(request: FastifyRequest): UserRow {
+  const user = optionalUser(request);
+  if (!user) {
+    throw unauthorized('Please sign in to continue.', 'not_signed_in');
   }
   touchLastSeen(user.id);
   return user;
 }
 
-export function requireAdmin(request: FastifyRequest): void {
-  const header = request.headers['x-admin-token'];
-  const token = Array.isArray(header) ? header[0] : header;
-  const fromQuery = (request.query as Record<string, string> | undefined)?.token;
-  const provided = token || fromQuery || '';
+export function clientIp(request: FastifyRequest): string {
+  return request.ip || 'unknown';
+}
 
-  if (!config.adminToken || provided !== config.adminToken) {
+/**
+ * Admin access. Either the shared admin token from the config, or a signed-in
+ * account flagged as an admin. Token attempts are rate limited per IP because
+ * once this is on the internet it is a guessable secret.
+ */
+export function requireAdmin(request: FastifyRequest): void {
+  const user = optionalUser(request);
+  if (user?.is_admin) return;
+
+  const header = request.headers['x-admin-token'];
+  const provided = (Array.isArray(header) ? header[0] : header) || '';
+
+  if (!config.adminToken || !provided) {
+    throw forbidden('Admin access is required here.', 'admin_required');
+  }
+
+  const limit = hit(`admin:${clientIp(request)}`, ADMIN_LIMIT);
+  if (!limit.allowed) {
+    throw forbidden(
+      `Too many attempts. Please wait ${Math.ceil(limit.retryAfter / 60)} minutes and try again.`,
+      'rate_limited',
+    );
+  }
+
+  if (provided !== config.adminToken) {
     throw forbidden('That admin token is not correct.', 'bad_admin_token');
   }
 }

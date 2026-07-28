@@ -12,6 +12,7 @@ set -euo pipefail
 PORT=8080
 STORAGE_DIR=""
 NO_SERVICE=0
+PUBLIC_URL=""
 SERVICE_NAME="betsend"
 
 APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,6 +28,7 @@ while [ $# -gt 0 ]; do
     --port)       PORT="$2"; shift 2 ;;
     --storage)    STORAGE_DIR="$2"; shift 2 ;;
     --no-service) NO_SERVICE=1; shift ;;
+    --public-url) PUBLIC_URL="${2%/}"; shift 2 ;;
     -h|--help)    sed -n '2,10p' "$0"; exit 0 ;;
     *)            die "unknown option '$1'" ;;
   esac
@@ -76,17 +78,21 @@ if [ -f "$CONFIG_PATH" ]; then
   ok 'kept your existing config.json'
 else
   ADMIN_TOKEN="$(node -e 'process.stdout.write(require("crypto").randomBytes(18).toString("base64").replace(/[+/=]/g,"").slice(0,20))')"
-  PORT="$PORT" STORAGE_DIR="$STORAGE_DIR" ADMIN_TOKEN="$ADMIN_TOKEN" node -e '
+  PORT="$PORT" STORAGE_DIR="$STORAGE_DIR" ADMIN_TOKEN="$ADMIN_TOKEN" PUBLIC_URL="$PUBLIC_URL" node -e '
     const fs = require("fs");
+    const publicUrl = process.env.PUBLIC_URL || "";
     fs.writeFileSync(process.argv[1], JSON.stringify({
       port: Number(process.env.PORT),
-      host: "0.0.0.0",
+      // Behind a reverse proxy, listening only on loopback means nobody can
+      // reach the app without going through TLS.
+      host: publicUrl ? "127.0.0.1" : "0.0.0.0",
       storageDir: process.env.STORAGE_DIR,
       adminToken: process.env.ADMIN_TOKEN,
       retentionHours: 72,
       maxUploadSize: 0,
       deleteAfterAllDownloaded: true,
       registrationMode: "open",
+      ...(publicUrl ? { publicMode: true, behindProxy: true, publicUrl } : {}),
     }, null, 2) + "\n");
   ' "$CONFIG_PATH"
   ok 'created config.json with a generated admin token'
@@ -143,7 +149,7 @@ UNIT
     warn "Check: journalctl -u ${SERVICE_NAME} -n 50   (or logs/betsend.log)"
   fi
 
-  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
+  if [ -z "$PUBLIC_URL" ] && command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
     ufw allow "${PORT}/tcp" >/dev/null 2>&1 || true
     ok "opened ${PORT}/tcp in ufw"
   fi
@@ -166,7 +172,10 @@ ADDRESSES="$(node -e '
 printf '\n  \033[90m────────────────────────────────────────────────\033[0m\n'
 printf '   \033[32mBetSend is set up.\033[0m\n\n'
 printf '   Send this address round the office:\n'
-if [ -n "$ADDRESSES" ]; then
+if [ -n "$PUBLIC_URL" ]; then
+  printf '     \033[36m%s\033[0m\n' "$PUBLIC_URL"
+  printf '     \033[90m(once your reverse proxy is pointing at 127.0.0.1:%s)\033[0m\n' "$PORT"
+elif [ -n "$ADDRESSES" ]; then
   while IFS= read -r address; do printf '     \033[36mhttp://%s%s\033[0m\n' "$address" "$SUFFIX"; done <<< "$ADDRESSES"
 else
   printf '     \033[36mhttp://<this machine'"'"'s IP>%s\033[0m\n' "$SUFFIX"
@@ -175,7 +184,11 @@ printf '\n   Admin token (for the Admin page):\n'
 printf '     \033[33m%s\033[0m\n' "$ADMIN_TOKEN"
 printf '     \033[90mAlso saved in config.json.\033[0m\n'
 printf '\n   Next: open the address, go to Admin, paste in your staff list.\n'
-printf '   \033[90mThen set "Who can pick a name" to list-only.\033[0m\n'
+if [ -n "$PUBLIC_URL" ]; then
+  printf '   \033[90mThen send each person a setup link so they can choose a password.\033[0m\n'
+else
+  printf '   \033[90mThen set "Who can pick a name" to list-only.\033[0m\n'
+fi
 if [ "$NO_SERVICE" -eq 0 ]; then
   printf '\n   Useful later:\n'
   printf '     \033[90mRestart      systemctl restart %s\033[0m\n' "$SERVICE_NAME"

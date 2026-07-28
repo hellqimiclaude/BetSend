@@ -2,18 +2,32 @@
 
 A self-hosted web app for sending large files between people on an office network.
 
-One machine on the LAN runs the server. Everyone else opens `http://<server-ip>:8080` in a
-browser — nothing to install, no accounts, no passwords. Drop files, pick who should get
-them, press Send. The files sit on the server until the recipients download them or the
-retention period runs out.
+One machine runs the server. Everyone else opens it in a browser — nothing to install.
+Drop files, pick who should get them, press Send. The files sit on the server until the
+recipients download them or the retention period runs out.
 
 Transfers are **store-and-forward**: the sender and the recipient never need to be online
 at the same time.
 
-> ⚠️ **LAN only.** BetSend has no authentication, no HTTPS and no encryption at rest. It is
-> designed for a trusted office network. **Do not port-forward it, do not expose it to the
-> internet, and do not put it in a DMZ.** If people outside the office need files, use
-> something built for that.
+Everyone signs in with a name and a password. Sessions are server-side cookies, so a
+lost laptop can be signed out centrally.
+
+## Two ways to run it
+
+|                | **Office network** (default)            | **Public** (`publicMode`)                       |
+| -------------- | --------------------------------------- | ----------------------------------------------- |
+| Reachable from | machines on the LAN                     | anywhere, over HTTPS                             |
+| Setup          | `Install BetSend.bat` / `install.sh`     | same, plus Caddy in front — see [Putting it on the internet](#putting-it-on-the-internet) |
+| Getting an account | admin sends a setup link, or people set their own password | admin sends a setup link — self-service is refused |
+| Cookies        | normal                                  | `Secure`, plus HSTS                              |
+
+> ⚠️ **Files are not encrypted at rest.** They sit on the server's disk in the clear until
+> they expire, and anyone with access to that machine can read them. Put the storage
+> directory on a drive you control, and do not use BetSend for material that needs
+> encryption at rest.
+>
+> If you run it on the LAN, keep it there: don't port-forward port 8080. Exposing it means
+> turning on `publicMode` and putting HTTPS in front — the section below covers it.
 
 ---
 
@@ -26,6 +40,7 @@ at the same time.
 - [Importing your staff list](#importing-your-staff-list)
 - [Configuration](#configuration)
 - [How retention and cleanup work](#how-retention-and-cleanup-work)
+- [Putting it on the internet](#putting-it-on-the-internet)
 - [How it runs in the background](#how-it-runs-in-the-background)
 - [Development](#development)
 - [Architecture](#architecture)
@@ -141,16 +156,31 @@ Uninstalling leaves your files and database alone unless you ask for them to go
 
 ## How people use it
 
-1. They open `http://<server-ip>:8080`.
-2. On the first visit they choose their name — either typing it (`J.Johnson` format) or
-   picking it from the imported list, depending on the mode you configured.
-3. The choice is remembered in the browser, so they land straight on the Send screen every
-   time after that. If someone else uses their machine, **Not you? Switch user** at the
-   bottom of the sidebar clears it.
+1. They open the address and sign in with their name and password.
+2. That's it — Send, Inbox and Sent are the whole app.
+
+Signing in lasts 30 days (`sessionDays`), so in practice people type a password once a
+month. **Sign out** at the bottom of the sidebar ends it immediately.
 
 Names are always *first initial, dot, last name* — `J.Johnson`, `A.Williams`,
 `S.O'Brien`. Capitalisation is normalised automatically, so `j.johnson` and `J.JOHNSON`
 are the same person.
+
+### Getting people their first password
+
+In Admin, next to each person, **Setup link** produces a one-time URL. Send it to them
+however you like — chat, email, or read it out. It works once and expires after 72 hours.
+The same button reads **Reset link** for somebody who has forgotten their password.
+
+The server never stores the link itself, only a hash of it, so it is shown exactly once.
+If it is lost, generate another.
+
+On a LAN install you can skip that entirely: set **How people get a password** to *Anyone
+on the staff list can set their own*, and colleagues create their own password on first
+visit. That setting is refused in `publicMode` — on a public URL, the first stranger to
+guess a name would own that account.
+
+Passwords must be at least 10 characters and cannot contain the person's own name.
 
 ---
 
@@ -212,7 +242,11 @@ Settings come from three places, in order of precedence:
 | `chunkSizeMb`              | `CHUNK_SIZE_MB`            | `8`        | Upload chunk size. 8–16 MB suits gigabit Ethernet.                   |
 | `cleanupIntervalMinutes`   | `CLEANUP_INTERVAL_MINUTES` | `10`       | How often the retention sweep runs.                                  |
 | `orphanUploadHours`        | `ORPHAN_UPLOAD_HOURS`      | `24`       | Abandoned part-uploads are deleted after this long.                  |
+| `sessionDays`              | `SESSION_DAYS`             | `30`       | How long a sign-in lasts before the password is needed again.        |
 | `logLevel`                 | `LOG_LEVEL`                | `info`     | `fatal`, `error`, `warn`, `info`, `debug`, `trace`.                  |
+| `publicMode`               | `PUBLIC_MODE`              | `false`    | Reachable from the internet: `Secure` cookies, HSTS, invite-only sign-up. |
+| `behindProxy`              | `BEHIND_PROXY`             | *publicMode* | Trust `X-Forwarded-*`. Only turn on when a proxy really is in front. |
+| `publicUrl`                | `PUBLIC_URL`               | —          | e.g. `https://files.example.com`. Makes generated setup links complete. |
 
 `retentionHours`, `maxUploadSize`, `deleteAfterAllDownloaded` and `registrationMode` can
 also be changed live from the Admin page — those edits are stored in the database and
@@ -241,6 +275,89 @@ having downloaded it, the sender cancelling it, or an admin deleting it.
 
 Because bulk sends share one copy of the bytes, a file is only removed once *every*
 transfer referencing it is finished.
+
+---
+
+## Putting it on the internet
+
+BetSend is a plain Node process with a SQLite file and a data directory, so a public
+deployment is: **a small server, a DNS record, and a reverse proxy that terminates
+HTTPS.** There is no container to build and no platform to sign up for.
+
+Any VPS will do — the app is single-process and I/O bound, so 1–2 vCPUs and 2 GB of RAM
+comfortably serve 150 people. What matters is **disk** (enough for everything in flight)
+and **bandwidth** (people will be pushing gigabytes).
+
+### 1. Point a name at the server
+
+Create a DNS A record — `files.yourcompany.com` → the server's IP. Wait for it to
+resolve before the next step; Caddy needs it to obtain a certificate.
+
+### 2. Install BetSend
+
+```bash
+git clone <this-repo> /opt/betsend
+cd /opt/betsend
+sudo ./scripts/install.sh --public-url https://files.yourcompany.com --storage /srv/betsend
+```
+
+Passing `--public-url` changes three things versus a LAN install:
+
+- `host` becomes `127.0.0.1`, so the app is unreachable except through the proxy — nobody
+  can skip TLS by hitting port 8080 directly;
+- `publicMode` turns on `Secure` cookies and HSTS;
+- `behindProxy` makes rate limiting see the real visitor rather than the proxy.
+
+It prints an admin token. Keep it.
+
+### 3. Put Caddy in front
+
+```bash
+sudo apt install caddy
+sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+sudo sed -i 's/files.example.com/files.yourcompany.com/' /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+Caddy obtains and renews the certificate by itself. The supplied `Caddyfile` also raises
+the body-size and timeout limits, which otherwise cut off multi-gigabyte transfers.
+
+### 4. Firewall
+
+Only 80 and 443 should be open. Port 8080 must **not** be:
+
+```bash
+sudo ufw allow 80,443/tcp
+sudo ufw enable
+```
+
+### 5. Add your people
+
+Open the site, go to **Admin**, enter the token, paste your staff list, and send each
+person a setup link. Promote yourself with **Make admin** so you stop needing the token.
+
+### What you are trusting
+
+Worth being clear about, since this is now reachable from anywhere:
+
+- **Files are not encrypted at rest.** Anyone with access to the server — you, your
+  hosting provider, anyone who gets root — can read what is waiting on disk.
+- **The admin token is a single shared secret.** Rate limited (5 tries per 15 minutes per
+  IP), but still one string. Promote a real admin account and treat the token as a
+  break-glass credential.
+- **There is no email.** Password resets are links you distribute by hand. For 150 people
+  that is fine; it does not scale past that.
+- **Sessions last 30 days.** Shorten `sessionDays` if that is too long, and use **Sign out
+  everywhere** in Admin when somebody loses a laptop.
+
+### Keeping it patched
+
+A public server is your responsibility to maintain:
+
+```bash
+cd /opt/betsend && git pull && sudo ./scripts/install.sh   # rebuild + restart
+sudo apt update && sudo apt upgrade                        # the OS underneath
+```
 
 ---
 
@@ -339,6 +456,8 @@ web/      React + Vite + TypeScript + Tailwind frontend
 | `transfers`      | One send action: sender, note, created/expiry time, state.                 |
 | `transfer_files` | Which blobs belong to which transfer.                                      |
 | `recipients`     | One row per person per transfer, with seen/downloaded timestamps.          |
+| `sessions`       | Live sign-ins. Stores a hash of the cookie, never the cookie.              |
+| `setup_tokens`   | One-time password links. Hashed too, and single use.                       |
 | `settings`       | Admin overrides of the boot configuration.                                 |
 | `events`         | A small audit trail.                                                       |
 
@@ -359,13 +478,27 @@ are built — a 10 GB transfer never lands in RAM.
 **Presence** is derived from live WebSocket connections, not a timestamp column, so the
 green dot next to a name is accurate rather than approximate.
 
+**Authentication.** Passwords are hashed with scrypt from Node's standard library — no
+native module to compile, memory-hard enough that a stolen database is not a list of
+passwords. Sign-in sets an `httpOnly` cookie holding a random token; the database stores
+only its SHA-256, so a leaked backup cannot be replayed. Because it is a cookie rather
+than a header, plain `<a>` download links carry it automatically — identity never appears
+in a URL where it could reach a proxy log or a `Referer` header. Wrong-password and
+unknown-name both return the same message after the same amount of work, so the sign-in
+form cannot be used to discover who works here. Logins are rate limited per IP *and* per
+name; the admin token per IP. Changing a password invalidates every other session.
+
 ### API
 
 | Method | Path                                    | Purpose                                    |
 | ------ | --------------------------------------- | ------------------------------------------ |
 | GET    | `/api/bootstrap`                        | Server limits + remembered identity        |
 | GET    | `/api/users?q=`                         | Directory for the recipient picker         |
-| POST   | `/api/users/claim`                      | Claim an identity                          |
+| POST   | `/api/session`                          | Sign in (sets the session cookie)          |
+| DELETE | `/api/session`                          | Sign out                                   |
+| GET    | `/api/setup/check`                      | Validate a setup link before showing a form |
+| POST   | `/api/setup`                            | Set a first password from a link           |
+| POST   | `/api/session/password`                 | Change your own password                   |
 | POST/PATCH/HEAD | `/api/uploads/*`               | tus resumable upload endpoint              |
 | POST   | `/api/transfers`                        | Commit finished uploads into a transfer    |
 | GET    | `/api/inbox` · `/api/sent`              | Incoming / outgoing transfers              |
@@ -376,6 +509,9 @@ green dot next to a name is accurate rather than approximate.
 | GET/PUT| `/api/admin/settings`                   | Live configuration                         |
 | GET    | `/api/admin/overview`                   | Storage, disk space, counts                |
 | POST   | `/api/admin/users/import`               | Bulk import names                          |
+| POST   | `/api/admin/users/:name/setup-link`     | Generate a one-time password link          |
+| POST   | `/api/admin/users/:name/sign-out`       | Sign someone out of every device           |
+| POST   | `/api/admin/users/:name/admin`          | Grant or revoke admin                      |
 | DELETE | `/api/admin/users/:name`                | Remove someone from the directory          |
 | GET    | `/api/admin/transfers`                  | Every transfer on the server               |
 | DELETE | `/api/admin/transfers/:id`              | Force-delete a transfer                    |
@@ -410,8 +546,21 @@ Admin shows what transfers are using versus what is free on the drive. Lower
 `retentionHours`, leave *delete as soon as everyone has downloaded* on, or delete specific
 transfers from the Admin table.
 
+**Somebody forgot their password.**
+Admin → find them → **Reset link**. Send them the link; it works once and expires in 72
+hours. There is no email in BetSend, so you distribute it yourself.
+
+**Somebody lost a laptop.**
+Admin → find them → **Sign out everywhere**, then send a reset link. Their cookie stops
+working immediately.
+
+**"You need a setup link before you can create a password."**
+Sign-up is invite-only — the default when `publicMode` is on. Generate a link in Admin.
+On a LAN install you can switch **How people get a password** to self-service instead.
+
 **Someone's name is wrong.**
-Remove it in Admin and have them pick again. Their existing transfers are unaffected.
+Remove it in Admin and add the correct one, then send a setup link. Their existing
+transfers are unaffected.
 
 **The badge or the online dots look stale.**
 That means the WebSocket dropped; the sidebar shows "Reconnecting to the server…" while it

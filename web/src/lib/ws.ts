@@ -14,16 +14,13 @@ export class LiveConnection {
   private retryDelay = 1000;
   private retryTimer: number | null = null;
   private closedByUs = false;
-  private user: string;
-
-  constructor(user: string) {
-    this.user = user;
-  }
 
   connect(): void {
     this.closedByUs = false;
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const url = `${protocol}://${window.location.host}/ws?user=${encodeURIComponent(this.user)}`;
+    // No identity in the URL — the server reads the session cookie, which the
+    // browser sends with the upgrade request.
+    const url = `${protocol}://${window.location.host}/ws`;
 
     let socket: WebSocket;
     try {

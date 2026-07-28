@@ -1,9 +1,12 @@
 import { t } from '../i18n';
 
 /**
- * Thin fetch wrapper. Every call carries the chosen identity in `X-User`;
- * admin calls add `X-Admin-Token`. Server errors always arrive as
- * `{ error: { code, message } }`, so the message is safe to show as-is.
+ * Thin fetch wrapper.
+ *
+ * Identity is a session cookie set by the server at sign-in — nothing is kept
+ * in JavaScript, so an XSS bug cannot read it, and plain download links carry
+ * it automatically. Admin calls add the shared token header when the signed-in
+ * account is not itself an admin.
  */
 
 export class ApiError extends Error {
@@ -17,12 +20,8 @@ export class ApiError extends Error {
   }
 }
 
-let identity: string | null = null;
 let adminToken: string | null = null;
-
-export function setIdentity(name: string | null): void {
-  identity = name;
-}
+let onSignedOut: (() => void) | null = null;
 
 export function setAdminToken(token: string | null): void {
   adminToken = token;
@@ -32,9 +31,13 @@ export function getAdminToken(): string | null {
   return adminToken;
 }
 
+/** Registered by the app so any 401 drops the user back to the sign-in screen. */
+export function setSignedOutHandler(handler: (() => void) | null): void {
+  onSignedOut = handler;
+}
+
 function headers(extra?: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = { ...extra };
-  if (identity) out['X-User'] = identity;
   if (adminToken) out['X-Admin-Token'] = adminToken;
   return out;
 }
@@ -44,11 +47,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   try {
     response = await fetch(path, {
       method,
+      credentials: 'same-origin', // send the session cookie
       headers: headers(body === undefined ? undefined : { 'Content-Type': 'application/json' }),
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    // Network-level failure: the server is down or the Wi-Fi dropped.
+    // Network-level failure: the server is down or the connection dropped.
     throw new ApiError(0, 'offline', t('error.offline'));
   }
 
@@ -66,7 +70,14 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   if (!response.ok) {
     const error = (payload as { error?: { code?: string; message?: string } })?.error;
-    throw new ApiError(response.status, error?.code ?? 'server_error', error?.message ?? t('error.generic'));
+    const code = error?.code ?? 'server_error';
+
+    // The session expired or was revoked — stop pretending we are signed in.
+    if (response.status === 401 && code === 'not_signed_in') {
+      onSignedOut?.();
+    }
+
+    throw new ApiError(response.status, code, error?.message ?? t('error.generic'));
   }
 
   return payload as T;
@@ -80,19 +91,14 @@ export const api = {
 };
 
 /**
- * Downloads go through a hidden iframe-free anchor click so the browser's own
- * download manager handles them (native progress, pause/resume via Range).
- * The identity travels as a query parameter because a plain link cannot set
- * headers.
+ * Downloads go through a normal link click so the browser's own download
+ * manager handles them — native progress, and Range-based pause/resume. The
+ * session cookie rides along with the navigation, so no identity ever appears
+ * in the URL where it could end up in a proxy log or a Referer header.
  */
-export function downloadUrl(path: string): string {
-  const separator = path.includes('?') ? '&' : '?';
-  return `${path}${separator}user=${encodeURIComponent(identity ?? '')}`;
-}
-
 export function startDownload(path: string): void {
   const link = document.createElement('a');
-  link.href = downloadUrl(path);
+  link.href = path;
   link.rel = 'noopener';
   document.body.appendChild(link);
   link.click();

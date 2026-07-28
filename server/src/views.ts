@@ -45,6 +45,9 @@ export interface UserView {
   online: boolean;
   lastSeenAt: number | null;
   source: 'self' | 'admin';
+  isAdmin: boolean;
+  /** False means the account exists but nobody has set a password yet. */
+  hasPassword: boolean;
 }
 
 export function toUserView(row: UserRow): UserView {
@@ -53,6 +56,8 @@ export function toUserView(row: UserRow): UserView {
     online: isOnline(row.name),
     lastSeenAt: row.last_seen_at,
     source: row.source,
+    isAdmin: Boolean(row.is_admin),
+    hasPassword: Boolean(row.password_hash),
   };
 }
 

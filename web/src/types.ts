@@ -5,11 +5,23 @@ export interface UserView {
   online: boolean;
   lastSeenAt: number | null;
   source: 'self' | 'admin';
+  isAdmin: boolean;
+  hasPassword: boolean;
 }
 
 export interface AdminUserView extends UserView {
   active: boolean;
   createdAt: number;
+  passwordSetAt: number | null;
+  activeSessions: number;
+}
+
+export interface SetupLink {
+  name: string;
+  link: string;
+  needsPublicUrl: boolean;
+  expiresInHours: number;
+  isReset: boolean;
 }
 
 export interface FileView {
@@ -46,6 +58,9 @@ export interface TransferView {
 export interface Bootstrap {
   app: { name: string; version: string };
   registrationMode: 'open' | 'list';
+  signupMode: 'invite' | 'claim';
+  publicMode: boolean;
+  minPasswordLength: number;
   namePattern: string;
   nameExample: string;
   chunkSize: number;
@@ -63,6 +78,7 @@ export interface RuntimeSettings {
   deleteAfterAllDownloaded: boolean;
   registrationMode: 'open' | 'list';
   storageDir: string;
+  signupMode: 'invite' | 'claim';
 }
 
 export interface AdminOverview {
@@ -73,7 +89,8 @@ export interface AdminOverview {
     diskFree: number;
     diskTotal: number;
   };
-  counts: { users: number; online: number; activeTransfers: number };
+  counts: { users: number; online: number; activeTransfers: number; withoutPassword: number };
+  security: { publicMode: boolean; behindProxy: boolean; publicUrl: string };
   settings: RuntimeSettings;
   server: {
     port: number;

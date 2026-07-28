@@ -1,74 +1,53 @@
 import type { FastifyInstance } from 'fastify';
 import { config } from '../config.js';
 import { getSettings } from '../services/settings.js';
-import { NAME_EXAMPLE, NAME_PATTERN_SOURCE, validateName } from '../util/names.js';
-import { createUser, findByName, listUsers, touchLastSeen } from '../repos/users.js';
+import { NAME_EXAMPLE, NAME_PATTERN_SOURCE } from '../util/names.js';
+import { listUsers, touchLastSeen } from '../repos/users.js';
 import { unreadCount } from '../repos/transfers.js';
 import { toUserView } from '../views.js';
-import { currentUser } from './auth.js';
-import { badRequest, forbidden } from '../util/errors.js';
+import { currentUser, optionalUser } from './auth.js';
+import { MIN_PASSWORD_LENGTH } from '../services/passwords.js';
 
 export default async function coreRoutes(app: FastifyInstance): Promise<void> {
   /**
-   * Everything the browser needs on first paint: server limits, the naming
-   * rule, and — if the browser remembered an identity — that user's state.
+   * Everything the browser needs on first paint. Safe to call signed out — it
+   * then returns only what the sign-in screen needs, and no staff names.
    */
   app.get('/api/bootstrap', async (request) => {
     const settings = getSettings();
-    const header = request.headers['x-user'];
-    const name = (Array.isArray(header) ? header[0] : header)?.trim();
-    const user = name ? findByName(name) : undefined;
-
-    if (user?.active) touchLastSeen(user.id);
+    const user = optionalUser(request);
+    if (user) touchLastSeen(user.id);
 
     return {
-      app: { name: 'BetSend', version: '1.0.0' },
+      app: { name: 'BetSend', version: '1.1.0' },
       registrationMode: settings.registrationMode,
+      signupMode: settings.signupMode,
       namePattern: NAME_PATTERN_SOURCE,
       nameExample: NAME_EXAMPLE,
+      minPasswordLength: MIN_PASSWORD_LENGTH,
+      publicMode: config.publicMode,
       chunkSize: Math.max(1, config.chunkSizeMb) * 1024 * 1024,
       maxUploadSize: settings.maxUploadSize,
       retentionHours: settings.retentionHours,
       deleteAfterAllDownloaded: settings.deleteAfterAllDownloaded,
       uploadEndpoint: '/api/uploads',
-      user: user?.active ? toUserView(user) : null,
-      unread: user?.active ? unreadCount(user.id) : 0,
+      user: user ? toUserView(user) : null,
+      unread: user ? unreadCount(user.id) : 0,
     };
   });
 
-  /** Directory for the recipient picker. `q` filters server-side for big lists. */
+  /**
+   * The staff directory, for the recipient picker.
+   *
+   * Signed-in only. Before authentication existed this was public; on a
+   * public URL that would hand any passer-by a list of everyone who works here.
+   */
   app.get('/api/users', async (request) => {
+    currentUser(request);
     const q = ((request.query as Record<string, string>).q ?? '').trim().toLocaleLowerCase();
     const all = listUsers();
     const filtered = q ? all.filter((u) => u.name.toLocaleLowerCase().includes(q)) : all;
     return { users: filtered.map(toUserView) };
-  });
-
-  /**
-   * Claim an identity. In `open` mode an unknown name is created on the spot;
-   * in `list` mode the name must already have been imported by an admin.
-   */
-  app.post('/api/users/claim', async (request) => {
-    const body = (request.body ?? {}) as { name?: string };
-    const check = validateName(body.name ?? '');
-    if (!check.ok) throw badRequest(check.error!, 'invalid_name');
-
-    const settings = getSettings();
-    const existing = findByName(check.value);
-
-    if (!existing || !existing.active) {
-      if (settings.registrationMode === 'list') {
-        throw forbidden(
-          `${check.value} is not on the staff list. Ask whoever runs BetSend to add you.`,
-          'not_on_list',
-        );
-      }
-      const created = createUser(check.value, 'self');
-      return { user: toUserView(created), unread: 0 };
-    }
-
-    touchLastSeen(existing.id);
-    return { user: toUserView(existing), unread: unreadCount(existing.id) };
   });
 
   app.get('/api/me', async (request) => {

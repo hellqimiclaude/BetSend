@@ -29,6 +29,19 @@ export interface AppConfig {
   /** Uncommitted uploads older than this are swept away. */
   orphanUploadHours: number;
   logLevel: string;
+
+  // --- public deployment -------------------------------------------------
+  /**
+   * Set when BetSend is reachable from outside the office. Turns on secure
+   * cookies, HSTS, and proxy-aware client IPs. Leave false for a LAN install.
+   */
+  publicMode: boolean;
+  /** Trust X-Forwarded-* headers. Required when behind Caddy/nginx. */
+  behindProxy: boolean;
+  /** e.g. https://files.example.com — used in generated setup links. */
+  publicUrl: string;
+  /** How long a login lasts before the user must sign in again. */
+  sessionDays: number;
 }
 
 const DEFAULTS = {
@@ -44,6 +57,10 @@ const DEFAULTS = {
   cleanupIntervalMinutes: 10,
   orphanUploadHours: 24,
   logLevel: 'info',
+  publicMode: false,
+  behindProxy: false,
+  publicUrl: '',
+  sessionDays: 30,
 };
 
 function readConfigFile(): Record<string, unknown> {
@@ -120,6 +137,17 @@ export function loadConfig(): AppConfig {
       DEFAULTS.orphanUploadHours,
     ),
     logLevel: pickString(process.env.LOG_LEVEL, file.logLevel, DEFAULTS.logLevel),
+
+    publicMode: pickBool(process.env.PUBLIC_MODE, file.publicMode, DEFAULTS.publicMode),
+    // Behind a reverse proxy is implied by public mode, but can be set alone
+    // (e.g. an internal nginx on the LAN).
+    behindProxy: pickBool(
+      process.env.BEHIND_PROXY,
+      file.behindProxy,
+      pickBool(process.env.PUBLIC_MODE, file.publicMode, DEFAULTS.publicMode),
+    ),
+    publicUrl: pickString(process.env.PUBLIC_URL, file.publicUrl, DEFAULTS.publicUrl).replace(/\/+$/, ''),
+    sessionDays: pickNumber(process.env.SESSION_DAYS, file.sessionDays, DEFAULTS.sessionDays),
   };
 }
 
