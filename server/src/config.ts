@@ -28,6 +28,14 @@ export interface AppConfig {
   cleanupIntervalMinutes: number;
   /** Uncommitted uploads older than this are swept away. */
   orphanUploadHours: number;
+  /**
+   * Refuse to start an upload that would leave less than this much free space.
+   * Keeps one careless (or malicious) sender from filling the disk and taking
+   * everybody else's transfers down with it.
+   */
+  minFreeDiskBytes: number;
+  /** Cap on bytes one person may have uploaded but not yet sent. 0 = no cap. */
+  perUserUploadBytes: number;
   logLevel: string;
 
   // --- public deployment -------------------------------------------------
@@ -56,6 +64,8 @@ const DEFAULTS = {
   chunkSizeMb: 8,
   cleanupIntervalMinutes: 10,
   orphanUploadHours: 24,
+  minFreeDiskBytes: 2 * 1024 * 1024 * 1024, // 2 GiB
+  perUserUploadBytes: 0,
   logLevel: 'info',
   publicMode: false,
   behindProxy: false,
@@ -159,6 +169,12 @@ export function loadConfig(): AppConfig {
       process.env.ORPHAN_UPLOAD_HOURS,
       file.orphanUploadHours,
       DEFAULTS.orphanUploadHours,
+    ),
+    minFreeDiskBytes: pickNumber(process.env.MIN_FREE_DISK_BYTES, file.minFreeDiskBytes, DEFAULTS.minFreeDiskBytes),
+    perUserUploadBytes: pickNumber(
+      process.env.PER_USER_UPLOAD_BYTES,
+      file.perUserUploadBytes,
+      DEFAULTS.perUserUploadBytes,
     ),
     logLevel: pickString(process.env.LOG_LEVEL, file.logLevel, DEFAULTS.logLevel),
 

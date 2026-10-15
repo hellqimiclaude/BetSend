@@ -36,6 +36,11 @@ export function setSignedOutHandler(handler: (() => void) | null): void {
   onSignedOut = handler;
 }
 
+/** Trigger that handler from outside this module (uploads bypass `request`). */
+export function notifySignedOut(): void {
+  onSignedOut?.();
+}
+
 function headers(extra?: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = { ...extra };
   if (adminToken) out['X-Admin-Token'] = adminToken;

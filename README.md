@@ -243,6 +243,8 @@ Settings come from three places, in order of precedence:
 | `cleanupIntervalMinutes`   | `CLEANUP_INTERVAL_MINUTES` | `10`       | How often the retention sweep runs.                                  |
 | `orphanUploadHours`        | `ORPHAN_UPLOAD_HOURS`      | `24`       | Abandoned part-uploads are deleted after this long.                  |
 | `sessionDays`              | `SESSION_DAYS`             | `30`       | How long a sign-in lasts before the password is needed again.        |
+| `minFreeDiskBytes`         | `MIN_FREE_DISK_BYTES`      | `2 GiB`    | Refuse to start an upload that would leave less free space than this. |
+| `perUserUploadBytes`       | `PER_USER_UPLOAD_BYTES`    | `0`        | Cap on bytes one person may have uploaded but not yet sent. `0` = no cap. |
 | `logLevel`                 | `LOG_LEVEL`                | `info`     | `fatal`, `error`, `warn`, `info`, `debug`, `trace`.                  |
 | `publicMode`               | `PUBLIC_MODE`              | `false`    | Reachable from the internet: `Secure` cookies, HSTS, invite-only sign-up. |
 | `behindProxy`              | `BEHIND_PROXY`             | *publicMode* | Trust `X-Forwarded-*`. Only turn on when a proxy really is in front. |
@@ -456,6 +458,7 @@ web/      React + Vite + TypeScript + Tailwind frontend
 | `transfers`      | One send action: sender, note, created/expiry time, state.                 |
 | `transfer_files` | Which blobs belong to which transfer.                                      |
 | `recipients`     | One row per person per transfer, with seen/downloaded timestamps.          |
+| `uploads`        | In-flight tus uploads: owner and declared size, for access and quota.     |
 | `sessions`       | Live sign-ins. Stores a hash of the cookie, never the cookie.              |
 | `setup_tokens`   | One-time password links. Hashed too, and single use.                       |
 | `settings`       | Admin overrides of the boot configuration.                                 |
@@ -477,6 +480,15 @@ are built — a 10 GB transfer never lands in RAM.
 
 **Presence** is derived from live WebSocket connections, not a timestamp column, so the
 green dot next to a name is accurate rather than approximate.
+
+**Uploads are authenticated.** `/api/uploads` requires a session like every
+other endpoint, enforced in a Fastify `preHandler` that runs *before* tus sees the
+request — tus picks an id and creates the file early in its own POST handler, so a
+check inside one of its hooks would already have let an anonymous caller write to
+disk. Each upload records who started it, so one colleague cannot resume, inspect or
+cancel another's transfer-in-progress even if they learn the id. Creation is also
+refused when it would push free disk below `minFreeDiskBytes`, or the sender past
+`perUserUploadBytes`.
 
 **Authentication.** Passwords are hashed with scrypt from Node's standard library — no
 native module to compile, memory-hard enough that a stolen database is not a list of
@@ -540,6 +552,10 @@ serves the compiled frontend from `server/public`.
 **An upload stalled.**
 It will resume by itself — tus retries with a backoff. If the tab was closed, re-adding the
 same file continues from where it stopped rather than restarting.
+
+**"The server is running out of space."**
+Uploads stop being accepted once free space would drop below `minFreeDiskBytes`
+(2 GiB by default), so the machine never wedges. Free some up, or lower the reserve.
 
 **Disk is filling up.**
 Admin shows what transfers are using versus what is free on the drive. Lower

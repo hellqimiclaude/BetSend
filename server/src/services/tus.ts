@@ -1,8 +1,10 @@
 import { Server } from '@tus/server';
 import { FileStore } from '@tus/file-store';
-import { paths, ensureDirs } from '../config.js';
+import { config, paths, ensureDirs } from '../config.js';
 import { getSettings } from './settings.js';
 import { newId } from '../util/ids.js';
+import { recordUpload } from '../repos/uploads.js';
+import { resolveSessionFromHeaders } from '../routes/auth.js';
 
 /**
  * Resumable uploads over the tus protocol.
@@ -35,7 +37,22 @@ export function getTusServer(): Server {
     // Location headers stay relative so the app works on any LAN hostname/IP.
     relativeLocation: true,
     respectForwardedHeaders: false,
-    namingFunction: () => newId(20),
+    // Runs before anything is written to disk. The route's preHandler has
+    // already rejected anyone without a session, so this only has to remember
+    // whose upload it is — recorded here so that even the very first PATCH can
+    // be ownership-checked.
+    namingFunction: (req) => {
+      const id = newId(20);
+      const user = resolveSessionFromHeaders(req.headers.cookie);
+      if (user) {
+        const declared = Number(req.headers['upload-length'] ?? 0);
+        recordUpload(id, user.id, Number.isFinite(declared) ? declared : 0);
+      }
+      return id;
+    },
+    // Same-origin requests do not need CORS at all; naming the public origin
+    // stops the server echoing an arbitrary one back when it is exposed.
+    ...(config.publicMode && config.publicUrl ? { allowedOrigins: [new URL(config.publicUrl).origin] } : {}),
     // Read the limit per request so the admin page can change it without a restart.
     maxSize: async () => {
       const max = getSettings().maxUploadSize;

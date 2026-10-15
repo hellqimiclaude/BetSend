@@ -21,6 +21,7 @@ import { buildTransferViews } from '../views.js';
 import { notifyNewTransfer, notifySender, notifyTransferGone } from '../services/notify.js';
 import { sanitizeFilename } from '../util/format.js';
 import { blobExists } from '../services/storage.js';
+import { forgetUploads } from '../repos/uploads.js';
 
 const MAX_NOTE_LENGTH = 500;
 const MAX_FILES_PER_TRANSFER = 200;
@@ -99,6 +100,9 @@ export default async function transferRoutes(app: FastifyInstance): Promise<void
       note: note || null,
       retentionHours: settings.retentionHours,
     });
+
+    // The blobs rows now own these bytes; the in-flight reservation is over.
+    forgetUploads(uploadIds);
 
     logEvent('transfer.created', transfer.id, user.id, `${recipientIds.length} recipient(s)`);
     notifyNewTransfer(transfer, user.name);

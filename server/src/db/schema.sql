@@ -33,6 +33,18 @@ CREATE TABLE IF NOT EXISTS setup_tokens (
   used_at    INTEGER
 );
 
+-- In-flight tus uploads: who started them, and how big they claim to be.
+-- Needed to stop one person's upload being resumed, inspected or cancelled by
+-- another, and to account for space a user has reserved but not yet committed.
+-- A row is dropped once the upload is attached to a transfer (a `blobs` row
+-- takes over) or when the upload is cancelled or swept away.
+CREATE TABLE IF NOT EXISTS uploads (
+  id         TEXT    PRIMARY KEY,       -- tus upload id
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  size       INTEGER NOT NULL,          -- declared Upload-Length
+  created_at INTEGER NOT NULL
+);
+
 -- One row = one physical copy of bytes on disk. Bulk sends reference the same
 -- blob from many recipients; the bytes are never duplicated.
 CREATE TABLE IF NOT EXISTS blobs (
@@ -102,3 +114,4 @@ CREATE INDEX IF NOT EXISTS idx_events_ts           ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_sessions_user       ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry     ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_setup_tokens_user   ON setup_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_uploads_user         ON uploads(user_id);

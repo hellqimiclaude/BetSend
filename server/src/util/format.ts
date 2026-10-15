@@ -14,3 +14,14 @@ export function sanitizeFilename(name: string): string {
     .trim();
   return base.slice(0, 255) || 'file';
 }
+
+const SIZE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'];
+
+/** Human-readable size, for messages people actually read. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), SIZE_UNITS.length - 1);
+  const value = bytes / 1024 ** exponent;
+  const digits = exponent === 0 ? 0 : value >= 100 ? 0 : 1;
+  return `${value.toFixed(digits)} ${SIZE_UNITS[exponent]}`;
+}

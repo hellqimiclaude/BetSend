@@ -10,6 +10,8 @@
   "chunkSizeMb": 8,
   "cleanupIntervalMinutes": 10,
   "orphanUploadHours": 24,
+  "minFreeDiskBytes": 2147483648,
+  "perUserUploadBytes": 0,
   "sessionDays": 30,
   "logLevel": "info",
 

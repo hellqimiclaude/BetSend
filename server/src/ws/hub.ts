@@ -2,7 +2,7 @@ import type { Server as HttpServer, IncomingMessage } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { touchLastSeen, type UserRow } from '../repos/users.js';
 import { unreadCount } from '../repos/transfers.js';
-import { COOKIE_NAME, resolveSession } from '../services/sessions.js';
+import { resolveSessionFromHeaders } from '../routes/auth.js';
 
 /**
  * Presence + push notifications.
@@ -94,22 +94,6 @@ function unregister(client: Client): void {
   schedulePresenceBroadcast();
 }
 
-/** Minimal cookie header parser — the ws upgrade never reaches Fastify's. */
-function readCookie(header: string | undefined, name: string): string | undefined {
-  if (!header) return undefined;
-  for (const part of header.split(';')) {
-    const index = part.indexOf('=');
-    if (index < 0) continue;
-    if (part.slice(0, index).trim() !== name) continue;
-    try {
-      return decodeURIComponent(part.slice(index + 1).trim());
-    } catch {
-      return part.slice(index + 1).trim();
-    }
-  }
-  return undefined;
-}
-
 export function attachWebSocket(server: HttpServer, log: { info: (o: unknown, m?: string) => void }): () => void {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -125,8 +109,7 @@ export function attachWebSocket(server: HttpServer, log: { info: (o: unknown, m?
 
     // The socket is authenticated by the same session cookie as the REST API —
     // never by a name in the query string, which anyone could type.
-    const resolved = resolveSession(readCookie(req.headers.cookie, COOKIE_NAME));
-    const user: UserRow | undefined = resolved?.user;
+    const user: UserRow | null = resolveSessionFromHeaders(req.headers.cookie);
     if (!user || !user.active) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();

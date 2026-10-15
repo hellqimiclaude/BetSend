@@ -16,6 +16,7 @@ import { getSettings } from './settings.js';
 import { notifyTransferGone } from './notify.js';
 import { findById } from '../repos/users.js';
 import { purgeExpiredSessions } from './sessions.js';
+import { purgeStaleUploads } from '../repos/uploads.js';
 
 export interface SweepResult {
   expired: number;
@@ -25,6 +26,7 @@ export interface SweepResult {
   freedBytes: number;
   strayFiles: number;
   expiredSessions: number;
+  staleUploads: number;
 }
 
 /**
@@ -37,6 +39,7 @@ export interface SweepResult {
  *  5. finished uploads never attached to a transfer -> unlink after orphanUploadHours
  *  6. files on disk with no blob row at all         -> unlink after orphanUploadHours
  *  7. sessions past their expiry                    -> deleted
+ *  8. ownership rows for abandoned uploads          -> deleted, freeing quota
  */
 export async function sweep(): Promise<SweepResult> {
   const settings = getSettings();
@@ -48,6 +51,7 @@ export async function sweep(): Promise<SweepResult> {
     freedBytes: 0,
     strayFiles: 0,
     expiredSessions: 0,
+    staleUploads: 0,
   };
 
   // 1 — expiry
@@ -106,6 +110,10 @@ export async function sweep(): Promise<SweepResult> {
 
   // 7 — logins that have run out
   result.expiredSessions = purgeExpiredSessions();
+
+  // 8 — ownership rows for uploads that were abandoned, so the quota they
+  // reserved is handed back
+  result.staleUploads = purgeStaleUploads(orphanCutoff);
 
   return result;
 }

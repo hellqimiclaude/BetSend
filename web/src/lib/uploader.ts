@@ -1,4 +1,5 @@
 import * as tus from 'tus-js-client';
+import { notifySignedOut } from './api';
 
 /**
  * Chunked, resumable uploads.
@@ -187,6 +188,10 @@ export class UploadBatch {
       },
       onError: (error) => {
         if (this.aborted) return;
+        if ((error as tus.DetailedError).originalResponse?.getStatus?.() === 401) {
+          // Same path as any other expired session: back to the sign-in screen.
+          notifySignedOut();
+        }
         item.status = 'error';
         item.error = friendlyUploadError(error);
         this.uploads.delete(item.key);
@@ -246,9 +251,30 @@ function extractUploadId(url: string | null): string | null {
 }
 
 function friendlyUploadError(error: Error | tus.DetailedError): string {
-  const status = (error as tus.DetailedError).originalResponse?.getStatus?.();
+  const response = (error as tus.DetailedError).originalResponse;
+  const status = response?.getStatus?.();
+
+  // The server explains refusals in plain language (too large, disk full,
+  // over quota); prefer its wording over anything guessed from the status.
+  if (status === 413 || status === 403) {
+    const message = serverMessage(response?.getBody?.());
+    if (message) return message;
+  }
+
   if (status === 413) return 'This file is larger than the server allows.';
+  if (status === 401) return 'You have been signed out. Sign in again and the upload will continue where it stopped.';
+  if (status === 403) return 'The server refused this upload.';
   if (status === 507 || status === 500) return 'The server ran out of room for this file.';
-  if (status === 403 || status === 401) return 'The server rejected this upload. Try picking your name again.';
   return 'The connection dropped and could not be restored. You can try again — it will continue where it stopped.';
+}
+
+/** Pull `{ error: { message } }` out of a response body, if that is what it is. */
+function serverMessage(body: string | undefined): string | null {
+  if (!body) return null;
+  try {
+    const parsed = JSON.parse(body) as { error?: { message?: string } };
+    return parsed?.error?.message ?? null;
+  } catch {
+    return null;
+  }
 }

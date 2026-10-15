@@ -17,6 +17,34 @@ export function sessionToken(request: FastifyRequest): string | undefined {
   return cookies?.[COOKIE_NAME];
 }
 
+/**
+ * Read one cookie out of a raw `Cookie:` header.
+ *
+ * Needed where Fastify's parsed cookies are not available: the WebSocket
+ * upgrade and the tus naming hook both see only a bare Node request.
+ */
+export function readCookieHeader(header: string | undefined, name: string): string | undefined {
+  if (!header) return undefined;
+  for (const part of header.split(';')) {
+    const index = part.indexOf('=');
+    if (index < 0) continue;
+    if (part.slice(0, index).trim() !== name) continue;
+    const raw = part.slice(index + 1).trim();
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
+  }
+  return undefined;
+}
+
+/** Resolve the signed-in user from a raw `Cookie:` header, or null. */
+export function resolveSessionFromHeaders(cookieHeader: string | undefined): UserRow | null {
+  const resolved = resolveSession(readCookieHeader(cookieHeader, COOKIE_NAME));
+  return resolved ? resolved.user : null;
+}
+
 /** The signed-in user, or null. Use when being signed out is a valid state. */
 export function optionalUser(request: FastifyRequest): UserRow | null {
   const resolved = resolveSession(sessionToken(request));
