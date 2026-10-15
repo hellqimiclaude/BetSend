@@ -39,7 +39,11 @@ foreach ($dir in @($Payload, $Staging)) {
 }
 
 Step 'Building the app'
-npm ci
+# --ignore-scripts keeps npm from running node-gyp against better-sqlite3's
+# binding.gyp, which would need Visual Studio even though the package already
+# carries the binary. The repo .npmrc says the same thing; this is explicit
+# because the staging install below sits outside that file's reach.
+npm ci --ignore-scripts
 if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
 npm run build
 if ($LASTEXITCODE -ne 0) { throw 'build failed' }
@@ -59,7 +63,9 @@ $minimal = [ordered]@{
 $minimal | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $Staging 'package.json') -Encoding UTF8
 
 Push-Location $Staging
-npm install --omit=dev --no-audit --no-fund
+# dist-staging has its own package.json, so npm treats it as the project root
+# and never reads the repo .npmrc. The flag has to be here.
+npm install --omit=dev --no-audit --no-fund --ignore-scripts
 if ($LASTEXITCODE -ne 0) { throw 'runtime dependency install failed' }
 Pop-Location
 

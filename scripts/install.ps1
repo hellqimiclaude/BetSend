@@ -158,7 +158,11 @@ if ($Prebuilt) {
   Write-Ok 'ready'
 } else {
   Write-Step 'Installing dependencies (this takes a minute the first time)'
-  & $npm.Source install
+  # --ignore-scripts is deliberate and load-bearing, not caution: npm compiles
+  # any package that ships a binding.gyp, and better-sqlite3 ships one next to
+  # the prebuilt Windows binary it actually uses. Without this flag npm calls
+  # node-gyp, which demands Visual Studio with the C++ workload. See .npmrc.
+  & $npm.Source install --ignore-scripts
   if ($LASTEXITCODE -ne 0) { Stop-WithMessage 'npm install failed. The output above says why.' }
   Write-Ok 'dependencies installed'
 

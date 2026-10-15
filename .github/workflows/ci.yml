@@ -18,6 +18,20 @@ jobs:
 
       - run: npm ci
 
+      # The Windows installer's whole premise is that better-sqlite3 ships a
+      # compiled binary, so the office PC needs no Visual Studio. npm will
+      # compile it anyway if ever let near its binding.gyp, and on Linux that
+      # succeeds quietly -- the failure only appears on Windows, at install
+      # time, on somebody's desk. Fail here instead. See .npmrc.
+      - name: Nothing was compiled from source
+        run: |
+          if [ -d node_modules/better-sqlite3/build ]; then
+            echo "::error::npm compiled better-sqlite3 with node-gyp. The same install fails on Windows, which has no C++ compiler. Check that .npmrc still sets ignore-scripts=true."
+            exit 1
+          fi
+          node -e "new (require('better-sqlite3'))(':memory:').exec('create table t (a)')"
+          echo "better-sqlite3 loaded its prebuilt binary"
+
       # Catches type errors in the server, the tests and the frontend.
       - run: npm run typecheck
 
