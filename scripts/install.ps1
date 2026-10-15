@@ -52,6 +52,15 @@ function Write-Step($message) { Write-Host "`n==> $message" -ForegroundColor Cya
 function Write-Ok($message)   { Write-Host "    $message" -ForegroundColor Green }
 function Write-Note($message) { Write-Host "    $message" -ForegroundColor DarkGray }
 
+function Write-JsonFile($path, $value) {
+  # Set-Content -Encoding UTF8 writes a byte-order mark on Windows PowerShell
+  # 5.1, and Node's JSON.parse treats that mark as a stray character: the
+  # server stops with "Unexpected token" before it reads a single setting.
+  # Node reads these files, so they are written without one.
+  $json = $value | ConvertTo-Json -Depth 10
+  [System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding $false))
+}
+
 function Stop-WithMessage($message) {
   Write-Host "`nSetup stopped: $message`n" -ForegroundColor Red
   exit 1
@@ -184,7 +193,7 @@ if (Test-Path $configPath) {
   if ($PSBoundParameters.ContainsKey('StorageDir')) { $config.storageDir = $StorageDir }
   $Port       = $config.port
   $StorageDir = $config.storageDir
-  $config | ConvertTo-Json -Depth 5 | Set-Content $configPath -Encoding UTF8
+  Write-JsonFile $configPath $config
   Write-Ok 'kept your existing config.json'
   $adminToken = $config.adminToken
 } else {
@@ -199,7 +208,7 @@ if (Test-Path $configPath) {
     deleteAfterAllDownloaded = $true
     registrationMode         = 'open'
   }
-  $config | ConvertTo-Json -Depth 5 | Set-Content $configPath -Encoding UTF8
+  Write-JsonFile $configPath $config
   Write-Ok "created config.json with a generated admin token"
 }
 

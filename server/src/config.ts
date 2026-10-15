@@ -143,7 +143,13 @@ function readConfigFile(): Record<string, unknown> {
   for (const candidate of candidates) {
     try {
       if (!fs.existsSync(candidate)) continue;
-      const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8')) as Record<string, unknown>;
+      // Strip a byte-order mark. Windows editors (and PowerShell's own
+      // `Set-Content -Encoding UTF8`) put one at the front of a UTF-8 file,
+      // and JSON.parse rejects it as a stray character — so an admin who
+      // edits config.json in the wrong editor gets a server that will not
+      // start and an error that says nothing about why.
+      const text = fs.readFileSync(candidate, 'utf8').replace(/^\uFEFF/, '');
+      const parsed = JSON.parse(text) as Record<string, unknown>;
       configFilePath = candidate;
       return parsed;
     } catch (err) {

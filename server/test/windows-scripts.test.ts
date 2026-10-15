@@ -31,6 +31,42 @@ function windowsScripts(): string[] {
   return found;
 }
 
+/**
+ * `Set-Content -Encoding UTF8` means "UTF-8 with a byte-order mark" on Windows
+ * PowerShell 5.1. Node's JSON.parse treats that mark as a stray character, so
+ * a freshly installed BetSend stopped at startup with "Unexpected token" and
+ * said nothing about configuration. Files Node reads go through the
+ * Write-JsonFile helper, which writes the same bytes without the mark.
+ */
+describe('JSON the installer writes for Node to read', () => {
+  const scripts = [
+    path.join(repoRoot, 'scripts', 'install.ps1'),
+    path.join(repoRoot, 'installer', 'build-payload.ps1'),
+  ];
+
+  for (const script of scripts) {
+    const name = path.relative(repoRoot, script);
+
+    test(`${name} writes JSON without a byte-order mark`, () => {
+      const offenders = fs
+        .readFileSync(script, 'utf8')
+        .split(/\r?\n/)
+        .filter((line) => !line.trim().startsWith('#'))
+        .filter((line) => /Set-Content|Out-File/.test(line) && /\.json|ConvertTo-Json/.test(line));
+
+      assert.deepEqual(
+        offenders,
+        [],
+        `${name} writes JSON with Set-Content/Out-File — use Write-JsonFile, or PowerShell 5.1 adds a BOM Node will not parse`,
+      );
+    });
+
+    test(`${name} has the Write-JsonFile helper`, () => {
+      assert.match(fs.readFileSync(script, 'utf8'), /function Write-JsonFile/);
+    });
+  }
+});
+
 describe('Windows scripts', () => {
   const files = windowsScripts();
 

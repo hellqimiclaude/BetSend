@@ -28,6 +28,13 @@ $Payload  = Join-Path $RepoRoot 'dist-payload'
 $Staging  = Join-Path $RepoRoot 'dist-staging'
 
 function Step($message) { Write-Host "`n==> $message" -ForegroundColor Cyan }
+function Write-JsonFile($path, $value) {
+  # Without the $false, Set-Content -Encoding UTF8 prefixes a byte-order mark
+  # under Windows PowerShell 5.1, and Node refuses the file: "Unexpected
+  # token". Both of these are read by Node.
+  $json = $value | ConvertTo-Json -Depth 10
+  [System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding $false))
+}
 function Ok($message)   { Write-Host "    $message" -ForegroundColor Green }
 
 Set-Location $RepoRoot
@@ -60,7 +67,7 @@ $minimal = [ordered]@{
   type         = 'module'
   dependencies = $runtimePackage.dependencies
 }
-$minimal | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $Staging 'package.json') -Encoding UTF8
+Write-JsonFile (Join-Path $Staging 'package.json') $minimal
 
 Push-Location $Staging
 # dist-staging has its own package.json, so npm treats it as the project root
@@ -100,15 +107,31 @@ Copy-Item (Join-Path $RepoRoot 'README.md')     (Join-Path $Payload 'README.md')
 
 # install.ps1 reads the version floor from here, and the server resolves its
 # own paths relative to it.
-@{ name = 'betsend'; version = '1.1.0'; private = $true; type = 'module' } |
-  ConvertTo-Json | Set-Content (Join-Path $Payload 'package.json') -Encoding UTF8
+Write-JsonFile (Join-Path $Payload 'package.json') @{
+  name = 'betsend'; version = '1.1.0'; private = $true; type = 'module'
+}
 
 Step 'Checking the payload actually runs'
+# A file rather than -e: Start-Process splits its argument list on whitespace,
+# so an inline expression arrives at node cut in half.
+# .cjs because the payload package.json says type=module, and the prebuilt
+# binary is loaded through require.
+$probeFile = Join-Path $Payload 'probe.cjs'
+@'
+const Database = require('better-sqlite3');
+const db = new Database(':memory:');
+db.exec('create table t (a integer)');
+db.prepare('insert into t values (?)').run(1);
+if (db.prepare('select count(*) as n from t').get().n !== 1) process.exit(1);
+db.close();
+'@ | Set-Content $probeFile -Encoding ASCII
+
 $probe = Start-Process -FilePath (Join-Path $Payload 'node\node.exe') `
-                       -ArgumentList '-e', "process.exit(require('better-sqlite3') ? 0 : 1)" `
+                       -ArgumentList 'probe.cjs' `
                        -WorkingDirectory $Payload -NoNewWindow -PassThru -Wait
-if ($probe.ExitCode -ne 0) { throw 'the bundled Node could not load the bundled better-sqlite3' }
-Ok 'bundled Node loads the native module'
+Remove-Item $probeFile -Force
+if ($probe.ExitCode -ne 0) { throw 'the bundled Node could not open a database with the bundled better-sqlite3' }
+Ok 'bundled Node opens a SQLite database'
 
 $size = [math]::Round(((Get-ChildItem $Payload -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 1)
 Remove-Item $Staging -Recurse -Force
