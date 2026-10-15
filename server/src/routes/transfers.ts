@@ -23,9 +23,6 @@ import { sanitizeFilename } from '../util/format.js';
 import { blobExists } from '../services/storage.js';
 import { forgetUploads } from '../repos/uploads.js';
 
-const MAX_NOTE_LENGTH = 500;
-const MAX_FILES_PER_TRANSFER = 200;
-
 export default async function transferRoutes(app: FastifyInstance): Promise<void> {
   /**
    * Commit finished uploads into a transfer.
@@ -45,12 +42,12 @@ export default async function transferRoutes(app: FastifyInstance): Promise<void
 
     const uploadIds = Array.isArray(body.uploads) ? body.uploads.map(String).filter(Boolean) : [];
     const recipientNames = Array.isArray(body.recipients) ? body.recipients.map(String).filter(Boolean) : [];
-    const note = typeof body.note === 'string' ? body.note.trim().slice(0, MAX_NOTE_LENGTH) : '';
+    // Neither the number of files nor the length of the note is capped. The
+    // database queries batch their parameters so any count works, and the
+    // request body limit is the only ceiling on the note.
+    const note = typeof body.note === 'string' ? body.note.trim() : '';
 
     if (uploadIds.length === 0) throw badRequest('Add at least one file before sending.', 'no_files');
-    if (uploadIds.length > MAX_FILES_PER_TRANSFER) {
-      throw badRequest(`That is more than ${MAX_FILES_PER_TRANSFER} files in one go. Please split it up.`, 'too_many_files');
-    }
     if (recipientNames.length === 0) throw badRequest('Choose at least one person to send to.', 'no_recipients');
 
     // Resolve recipients (deduplicated, order preserved).

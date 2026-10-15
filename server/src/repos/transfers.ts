@@ -40,6 +40,24 @@ function placeholders(n: number): string {
   return new Array(n).fill('?').join(',');
 }
 
+/**
+ * SQLite allows at most 32,766 host parameters in one statement, so an `IN
+ * (...)` list built from user input has to be split. There is no cap on how
+ * many files a transfer may hold, which means this is reachable rather than
+ * theoretical.
+ */
+const PARAMETER_LIMIT = 30_000;
+
+function inBatches<T, R>(values: T[], run: (batch: T[]) => R[]): R[] {
+  if (values.length <= PARAMETER_LIMIT) return values.length === 0 ? [] : run(values);
+
+  const out: R[] = [];
+  for (let i = 0; i < values.length; i += PARAMETER_LIMIT) {
+    out.push(...run(values.slice(i, i + PARAMETER_LIMIT)));
+  }
+  return out;
+}
+
 export interface CreateTransferInput {
   senderId: number;
   blobIds: string[];
@@ -62,9 +80,11 @@ export function createTransfer(input: CreateTransferInput): TransferRow {
 
   const run = db.transaction(() => {
     let totalSize = 0;
-    const blobs = db
-      .prepare(`SELECT * FROM blobs WHERE id IN (${placeholders(input.blobIds.length)})`)
-      .all(...input.blobIds) as { id: string; size: number; state: string; committed_at: number | null }[];
+    const blobs = inBatches(input.blobIds, (batch) =>
+      db
+        .prepare(`SELECT * FROM blobs WHERE id IN (${placeholders(batch.length)})`)
+        .all(...batch) as { id: string; size: number; state: string; committed_at: number | null }[],
+    );
 
     const byId = new Map(blobs.map((b) => [b.id, b]));
     for (const blobId of input.blobIds) {
@@ -110,31 +130,33 @@ export function requireTransfer(id: string): TransferRow {
 }
 
 export function filesFor(transferIds: string[]): TransferFileRow[] {
-  if (transferIds.length === 0) return [];
-  return getDb()
-    .prepare(
-      `SELECT tf.transfer_id, tf.blob_id, tf.ordinal,
-              b.original_name, b.size, b.mime, b.storage_key, b.state AS blob_state
-         FROM transfer_files tf
-         JOIN blobs b ON b.id = tf.blob_id
-        WHERE tf.transfer_id IN (${placeholders(transferIds.length)})
-        ORDER BY tf.transfer_id, tf.ordinal`,
-    )
-    .all(...transferIds) as TransferFileRow[];
+  return inBatches(transferIds, (batch) =>
+    getDb()
+      .prepare(
+        `SELECT tf.transfer_id, tf.blob_id, tf.ordinal,
+                b.original_name, b.size, b.mime, b.storage_key, b.state AS blob_state
+           FROM transfer_files tf
+           JOIN blobs b ON b.id = tf.blob_id
+          WHERE tf.transfer_id IN (${placeholders(batch.length)})
+          ORDER BY tf.transfer_id, tf.ordinal`,
+      )
+      .all(...batch) as TransferFileRow[],
+  );
 }
 
 export function recipientsFor(transferIds: string[]): RecipientRow[] {
-  if (transferIds.length === 0) return [];
-  return getDb()
-    .prepare(
-      `SELECT r.id, r.transfer_id, r.user_id, u.name, r.seen_at, r.downloaded_at,
-              r.download_count, r.notified_at
-         FROM recipients r
-         JOIN users u ON u.id = r.user_id
-        WHERE r.transfer_id IN (${placeholders(transferIds.length)})
-        ORDER BY u.name COLLATE NOCASE`,
-    )
-    .all(...transferIds) as RecipientRow[];
+  return inBatches(transferIds, (batch) =>
+    getDb()
+      .prepare(
+        `SELECT r.id, r.transfer_id, r.user_id, u.name, r.seen_at, r.downloaded_at,
+                r.download_count, r.notified_at
+           FROM recipients r
+           JOIN users u ON u.id = r.user_id
+          WHERE r.transfer_id IN (${placeholders(batch.length)})
+          ORDER BY u.name COLLATE NOCASE`,
+      )
+      .all(...batch) as RecipientRow[],
+  );
 }
 
 export function recipientUserIds(transferId: string): number[] {

@@ -309,7 +309,6 @@ export function SendView() {
           value={note}
           disabled={busy}
           rows={2}
-          maxLength={500}
           onChange={(event) => setNote(event.target.value)}
           placeholder={t('send.notePlaceholder')}
           className="w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:focus:ring-brand-950"

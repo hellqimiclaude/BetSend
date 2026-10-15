@@ -20,8 +20,11 @@ export const PUBLIC_DIR = path.resolve(here, '..', 'public');
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: { level: config.logLevel },
-    // Uploads arrive as raw streams on the tus routes; nothing else is large.
-    bodyLimit: 1024 * 1024,
+    // Uploads arrive as raw streams on the tus routes, so this only covers
+    // JSON. It is generous because a transfer commit carries one id per file
+    // and there is no cap on how many files a transfer may hold, nor on the
+    // length of the note.
+    bodyLimit: 16 * 1024 * 1024,
     // Behind Caddy/nginx the socket address is the proxy, so rate limiting and
     // logs need the forwarded client address instead. Only trust this when a
     // proxy really is in front — otherwise clients can spoof their own IP.

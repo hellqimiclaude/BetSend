@@ -365,6 +365,30 @@ restart.
 
 ---
 
+### What is and is not limited
+
+| | |
+| --- | --- |
+| File size | **No limit.** `maxUploadSize` is `0`; tus is told 8 PB. |
+| Files per transfer | **No limit.** Database queries batch their parameters, so any count works. |
+| Note length | **No limit**, up to the 16 MB request body. |
+| Recipients | **No limit.** |
+| What actually stops an upload | Free disk falling below `minFreeDiskBytes` (2 GiB), which is the only limit on by default. |
+
+Zips larger than 4 GB are handled: the writer switches to ZIP64 automatically, both
+for an individual file over 4 GiB and for an archive whose total passes it.
+
+Two ceilings worth knowing about, neither configurable in BetSend:
+
+- **FAT32 cannot hold a file over 4 GB.** Keep `storageDir` on NTFS, which it will be
+  unless you point it at an old USB drive.
+- **Behind Caddy**, `deploy/Caddyfile` allows an unlimited body but gives a transfer
+  six hours to finish. On the LAN that is irrelevant — 10 GB over gigabit takes about
+  ninety seconds — but over a slow link it caps you around 25 GB. Raise `read_body`
+  if that ever bites.
+
+---
+
 ## How retention and cleanup work
 
 Every `cleanupIntervalMinutes` (and on demand from **Admin → Run cleanup now**) the server
