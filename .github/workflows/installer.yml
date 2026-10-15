@@ -1,0 +1,113 @@
+name: Installer
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Produces dist-payload\: the built app, its runtime dependencies and a
+      # bundled node.exe. Fails loudly if better-sqlite3 did not bring a
+      # Windows binary, since that is what sends people hunting for a C++
+      # compiler.
+      - name: Build the payload
+        shell: powershell
+        run: ./installer/build-payload.ps1
+
+      - name: Compile the installer
+        shell: powershell
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "Inno Setup is not on this runner at $iscc" }
+          & $iscc /DAppVersion=1.1.0 installer\BetSend.iss
+          if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
+          Get-ChildItem dist-installer
+
+      # The part that matters: install it the way an office PC would, then
+      # check BetSend is actually serving. Everything before this only proves
+      # the package compiles.
+      - name: Install it silently and prove it serves
+        shell: powershell
+        run: |
+          $setup = (Get-ChildItem dist-installer -Filter *.exe | Select-Object -First 1).FullName
+          Write-Host "running $setup"
+
+          $run = Start-Process -FilePath $setup `
+                   -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=install.log' `
+                   -PassThru -Wait
+          if ($run.ExitCode -ne 0) {
+            Get-Content install.log -Tail 60
+            throw "the installer exited with $($run.ExitCode)"
+          }
+
+          $app = "${env:ProgramFiles}\BetSend"
+          foreach ($required in 'node\node.exe','server\dist\index.js','server\public\index.html','config.json') {
+            if (-not (Test-Path (Join-Path $app $required))) { throw "missing after install: $required" }
+          }
+
+          $config = Get-Content (Join-Path $app 'config.json') -Raw | ConvertFrom-Json
+          if ([string]::IsNullOrWhiteSpace($config.adminToken)) { throw 'no admin token was generated' }
+          if ($config.adminToken -eq 'change-me')               { throw 'admin token left at the default' }
+
+          # The installer registers a startup task and starts it, so BetSend
+          # should already be answering without anything else being run.
+          $up = $false
+          foreach ($attempt in 1..45) {
+            Start-Sleep -Seconds 1
+            try {
+              $health = Invoke-WebRequest -Uri "http://127.0.0.1:$($config.port)/api/health" -UseBasicParsing -TimeoutSec 2
+              if ($health.StatusCode -eq 200) { $up = $true; break }
+            } catch { }
+          }
+          if (-not $up) {
+            Get-Content (Join-Path $app 'logs\betsend.log') -Tail 40 -ErrorAction SilentlyContinue
+            throw 'BetSend did not answer after a silent install'
+          }
+          Write-Host 'BetSend answered /api/health after a silent install'
+
+          # And the web interface is really being served, not just the API.
+          $page = Invoke-WebRequest -Uri "http://127.0.0.1:$($config.port)/" -UseBasicParsing
+          if ($page.Content -notmatch 'BetSend') { throw 'the web interface did not load' }
+          Write-Host 'the web interface loads'
+
+      - name: Uninstall cleanly
+        shell: powershell
+        run: |
+          $uninstaller = Get-ChildItem "${env:ProgramFiles}\BetSend" -Filter 'unins*.exe' | Select-Object -First 1
+          if (-not $uninstaller) { throw 'no uninstaller was installed' }
+
+          $run = Start-Process -FilePath $uninstaller.FullName `
+                   -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru -Wait
+          if ($run.ExitCode -ne 0) { throw "uninstall exited with $($run.ExitCode)" }
+
+          Start-Sleep -Seconds 5
+          if (Get-ScheduledTask -TaskName 'BetSend' -ErrorAction SilentlyContinue) {
+            throw 'the startup task survived uninstallation'
+          }
+          Write-Host 'uninstalled, and the startup task is gone'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BetSend-Setup
+          path: dist-installer/*.exe
+          if-no-files-found: error
+
+      # On a published release, attach the installer to it.
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        shell: bash
+        run: gh release upload "${{ github.event.release.tag_name }}" dist-installer/*.exe --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -84,10 +84,25 @@ The server keeps its state in a single SQLite file — there is no database to i
 
 ## Quick start
 
-### Windows — one file
+### Windows — installer (recommended)
+
+Download **BetSend-Setup.exe** from the
+[latest release](https://github.com/hellqimiclaude/BetSend/releases/latest) and run it.
+
+An ordinary Windows setup wizard: next, next, pick a port and a folder for the files,
+install. It carries its own Node.js runtime, so **nothing has to be installed first** —
+no Node, no npm, and no C++ compiler. When it finishes it shows the address to hand
+round the office and the generated admin token, and BetSend is already running.
+
+It appears in Add/Remove Programs, puts shortcuts in the Start Menu, starts with
+Windows, and no console window ever appears.
+
+### Windows — one file, builds from source
 
 Download **[`BetSend-Setup.bat`](https://raw.githubusercontent.com/hellqimiclaude/BetSend/claude/lan-file-transfer-app-b5b9xn/BetSend-Setup.bat)**
-(right-click → *Save link as…*) and double-click it.
+(right-click → *Save link as…*) and double-click it. Use this when you want the
+current code from the branch rather than a release — it builds on the machine, so
+Node.js is installed if missing and a console window shows the progress.
 
 That is the whole thing. It asks Windows for administrator rights, installs Node.js
 with winget if it is missing, downloads the current code to `C:\BetSend`, and runs the

@@ -9,3 +9,6 @@ config.json
 .env
 *.tsbuildinfo
 logs/
+dist-payload/
+dist-staging/
+dist-installer/

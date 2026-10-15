@@ -32,7 +32,13 @@
 param(
   [int]    $Port = 8080,
   [string] $StorageDir,
-  [switch] $NoService
+  [switch] $NoService,
+  # Set by the packaged installer: the app is already built and ships its own
+  # Node runtime, so there is nothing to fetch or compile.
+  [switch] $Prebuilt,
+  [string] $NodeExe,
+  # Stay quiet when another installer is drawing the user interface.
+  [switch] $Quiet
 )
 
 $ErrorActionPreference = 'Stop'
@@ -108,16 +114,21 @@ if (-not $NoService -and -not (Test-Administrator)) {
 if (-not $StorageDir) { $StorageDir = Join-Path $AppRoot 'data' }
 
 Write-Step 'Checking Node.js'
-$node = Get-Command node -ErrorAction SilentlyContinue
-if (-not $node) {
-  Stop-WithMessage 'Node.js is not installed. Get the LTS installer from https://nodejs.org, then run this again.'
+if ($NodeExe) {
+  if (-not (Test-Path $NodeExe)) { Stop-WithMessage "The bundled Node.js runtime is missing from $NodeExe." }
+  $nodeExe = (Resolve-Path $NodeExe).Path
+} else {
+  $node = Get-Command node -ErrorAction SilentlyContinue
+  if (-not $node) {
+    Stop-WithMessage 'Node.js is not installed. Get the LTS installer from https://nodejs.org, then run this again.'
+  }
+  $nodeExe = $node.Source
 }
 
-$nodeExe     = $node.Source
 $nodeVersion = (& $nodeExe --version).TrimStart('v')
 $nodeMajor   = [int]($nodeVersion.Split('.')[0])
-if ($nodeMajor -lt 20) {
-  Stop-WithMessage "Node.js $nodeVersion is too old. BetSend needs 20 or newer -- update from https://nodejs.org."
+if ($nodeMajor -lt 22) {
+  Stop-WithMessage "Node.js $nodeVersion is too old. BetSend needs 22 or newer -- update from https://nodejs.org."
 }
 Write-Ok "Node.js $nodeVersion at $nodeExe"
 
@@ -139,15 +150,23 @@ try {
 
 # --- 1. build --------------------------------------------------------------
 
-Write-Step 'Installing dependencies (this takes a minute the first time)'
-& $npm.Source install
-if ($LASTEXITCODE -ne 0) { Stop-WithMessage 'npm install failed. The output above says why.' }
-Write-Ok 'dependencies installed'
+if ($Prebuilt) {
+  Write-Step 'Using the bundled build'
+  if (-not (Test-Path (Join-Path $AppRoot 'server\dist\index.js'))) {
+    Stop-WithMessage 'this package is missing its compiled server.'
+  }
+  Write-Ok 'ready'
+} else {
+  Write-Step 'Installing dependencies (this takes a minute the first time)'
+  & $npm.Source install
+  if ($LASTEXITCODE -ne 0) { Stop-WithMessage 'npm install failed. The output above says why.' }
+  Write-Ok 'dependencies installed'
 
-Write-Step 'Building the app'
-& $npm.Source run build
-if ($LASTEXITCODE -ne 0) { Stop-WithMessage 'the build failed. The output above says why.' }
-Write-Ok 'built'
+  Write-Step 'Building the app'
+  & $npm.Source run build
+  if ($LASTEXITCODE -ne 0) { Stop-WithMessage 'the build failed. The output above says why.' }
+  Write-Ok 'built'
+}
 
 # --- 2. configuration ------------------------------------------------------
 
@@ -256,6 +275,16 @@ if (-not $NoService) {
 $addresses = Get-LanAddresses
 $primary   = if ($addresses.Count -gt 0) { $addresses[0] } else { 'this-machine' }
 $suffix    = if ($Port -eq 80) { '' } else { ":$Port" }
+
+if ($Quiet) {
+  # The packaged installer shows the token on its finish page. A file is far
+  # easier to read reliably from Inno's Pascal Script than parsing JSON, and
+  # the installer deletes it as soon as it has been displayed.
+  Set-Content -Path (Join-Path $AppRoot 'admin-token.txt') -Value $adminToken -Encoding ASCII -NoNewline
+  Write-Host ''
+  Write-Host "  Ready on port $Port. Admin token: $adminToken"
+  return
+}
 
 Write-Host ''
 Write-Host '  ------------------------------------------------' -ForegroundColor DarkGray
