@@ -5,6 +5,7 @@ import { getDb, closeDb } from './db/index.js';
 import { attachWebSocket } from './ws/hub.js';
 import { startCleanupLoop } from './services/cleanup.js';
 import { getSettings } from './services/settings.js';
+import { mailConfigured, setMailLogger } from './services/mail.js';
 
 function lanAddresses(): string[] {
   const out: string[] = [];
@@ -21,6 +22,7 @@ async function main(): Promise<void> {
   getDb(); // apply schema before anything can query
 
   const app = await buildApp();
+  setMailLogger(app.log);
   const stopCleanup = startCleanupLoop(app.log);
 
   await app.listen({ host: config.host, port: config.port });
@@ -49,6 +51,12 @@ async function main(): Promise<void> {
       `\n  BetSend is running. Colleagues can open:\n${addresses
         .map((ip) => `    http://${ip}:${config.port}`)
         .join('\n')}\n`,
+    );
+  }
+
+  if (!mailConfigured()) {
+    app.log.warn(
+      'No mail relay configured (smtpHost/smtpFrom). Nobody can register or reset a password, and recipients will not be told files are waiting.',
     );
   }
 

@@ -13,6 +13,16 @@
   "minFreeDiskBytes": 2147483648,
   "perUserUploadBytes": 0,
   "sessionDays": 30,
+
+  "_comment_mail": "The office Exchange relay. Internal relays usually accept unauthenticated mail from an internal address on port 25; set smtpUser/smtpPassword only if yours demands them.",
+  "smtpHost": "mail.betlive.com",
+  "smtpPort": 25,
+  "smtpFrom": "BetSend <betsend@betlive.com>",
+  "smtpRequireTls": false,
+  "smtpRejectUnauthorized": false,
+  "emailDomains": ["betlive.com"],
+  "notifyByEmail": true,
+  "requireAdminApproval": false,
   "logLevel": "info",
 
   "_comment_public": "Uncomment the three below only when BetSend sits behind a reverse proxy with HTTPS. Set host to 127.0.0.1 at the same time so the app cannot be reached without TLS.",

@@ -221,36 +221,97 @@ Passwords must be at least 10 characters and cannot contain the person's own nam
 
 ---
 
+## Email
+
+Everybody signs in with their work address, and that address is the identity: it is
+what the recipient picker matches on, and being able to receive mail at
+**@betlive.com** is what proves somebody works here. There is no separate staff list
+to curate.
+
+Three things depend on it:
+
+- **Registering.** A colleague enters their work address and gets a link to choose a
+  password. No admin has to hand anything over.
+- **Forgotten passwords.** Same thing, self-service.
+- **"You have files waiting."** The important one. Store-and-forward means the
+  recipient usually is *not* sitting in the app, so without an email a transfer can
+  expire unread — the app failing at its one job.
+
+### Pointing it at Exchange
+
+```json
+{
+  "smtpHost": "mail.betlive.com",
+  "smtpPort": 25,
+  "smtpFrom": "BetSend <betsend@betlive.com>",
+  "emailDomains": ["betlive.com"]
+}
+```
+
+An internal Exchange relay normally accepts unauthenticated mail from an internal
+address on port 25, which is what these defaults assume. Set `smtpUser` and
+`smtpPassword` only if yours insists; leave them out and BetSend will not try to
+authenticate at all, which is what Exchange usually wants.
+
+Other knobs, rarely needed: `smtpRequireTls` to force STARTTLS, `smtpSecure` for
+implicit TLS on 465, and `smtpRejectUnauthorized` if your relay has a certificate
+from a CA this machine trusts (it defaults to off, because internal relays usually
+do not).
+
+Whoever runs Exchange may need to let this machine's IP relay — that is the usual
+reason nothing arrives.
+
+### Check it works
+
+**Admin → Email → Send a test message.** It reports whatever the relay said rather
+than a generic failure, so a refusal tells you what to fix. Do this before telling
+anyone the address: without mail, nobody can register or reset a password.
+
+`emailDomains` also accepts subdomains, so `@mail.betlive.com` is admitted by
+`betlive.com`. Set it to `[]` to accept any domain — only sensible on a closed LAN.
+
+---
+
 ## Importing your staff list
 
-Open **Admin** in the sidebar and enter your `adminToken`. In **User list → Import people**,
-paste the names:
+Optional: people can register themselves with their work address. Importing just means
+they appear in the recipient picker before their first sign-in.
+
+Open **Admin** in the sidebar and enter your `adminToken`. In **User list → Import
+people**, paste the addresses:
 
 ```
-J.Johnson
-M.Smith
-A.Williams
+j.johnson@betlive.com
+m.smith@betlive.com
+a.williams@betlive.com
 ```
 
-CSV works too — the name is taken from the first column, and a `name` header row is
-ignored:
+CSV works too — whichever column has the `@` is the address, and the other is used as
+the display name:
 
 ```csv
-name,department
-J.Johnson,Finance
-M.Smith,Legal
+name,email
+Jo Johnson,j.johnson@betlive.com
+Mark Smith,m.smith@betlive.com
 ```
+
+Without a name, one is derived from the address: `j.johnson@betlive.com` shows up as
+`J.Johnson`.
 
 Blank lines and lines starting with `#` are skipped, duplicates are ignored, and anything
 that does not match the `X.Lastname` pattern is reported back to you rather than silently
 dropped. Re-importing the same list is safe.
 
-### Locking the list down
+### Locking it down
 
-By default anyone can type any name (`registrationMode: "open"`). Once your 150 names are
-imported, switch **Who can pick a name** to *Only names on the imported list*
-(`registrationMode: "list"`). New visitors then get a searchable picker instead of a text
-box, and unknown names are refused.
+By default anyone with a `@betlive.com` address can register (`registrationMode:
+"open"`). Once everybody is imported you can switch **Who can register** to *Only
+addresses I have imported* (`registrationMode: "list"`), after which an unknown address
+gets no link — and is told nothing either way, so the setting cannot be used to find out
+who works here.
+
+Set `requireAdminApproval` if you also want to approve each account by hand after the
+address is verified.
 
 Removing someone from Admin takes them out of the directory. Transfers they already sent or
 received are left untouched.
@@ -280,6 +341,16 @@ Settings come from three places, in order of precedence:
 | `cleanupIntervalMinutes`   | `CLEANUP_INTERVAL_MINUTES` | `10`       | How often the retention sweep runs.                                  |
 | `orphanUploadHours`        | `ORPHAN_UPLOAD_HOURS`      | `24`       | Abandoned part-uploads are deleted after this long.                  |
 | `sessionDays`              | `SESSION_DAYS`             | `30`       | How long a sign-in lasts before the password is needed again.        |
+| `smtpHost`                 | `SMTP_HOST`                | —          | The office relay, e.g. `mail.betlive.com`. Without it there is no registration or password reset. |
+| `smtpPort`                 | `SMTP_PORT`                | `25`       | Exchange's usual internal relay port.                                |
+| `smtpFrom`                 | `SMTP_FROM`                | —          | Envelope sender, e.g. `BetSend <betsend@betlive.com>`.               |
+| `smtpUser` / `smtpPassword`| `SMTP_USER` / `SMTP_PASSWORD` | —       | Only if your relay demands authentication; omitted means none is attempted. |
+| `smtpRequireTls`           | `SMTP_REQUIRE_TLS`         | `false`    | Force STARTTLS.                                                      |
+| `smtpSecure`               | `SMTP_SECURE`              | `false`    | Implicit TLS (port 465). Exchange rarely uses this.                  |
+| `smtpRejectUnauthorized`   | `SMTP_REJECT_UNAUTHORIZED` | `false`    | Verify the relay's certificate. Off by default: internal relays are usually self-signed. |
+| `emailDomains`             | `EMAIL_DOMAINS`            | `betlive.com` | Addresses must end in one of these to register. `[]` accepts any. |
+| `notifyByEmail`            | `NOTIFY_BY_EMAIL`          | `true`     | Email recipients when files arrive.                                  |
+| `requireAdminApproval`     | `REQUIRE_ADMIN_APPROVAL`   | `false`    | Approve each account by hand even after the address is verified.     |
 | `minFreeDiskBytes`         | `MIN_FREE_DISK_BYTES`      | `2 GiB`    | Refuse to start an upload that would leave less free space than this. |
 | `perUserUploadBytes`       | `PER_USER_UPLOAD_BYTES`    | `0`        | Cap on bytes one person may have uploaded but not yet sent. `0` = no cap. |
 | `logLevel`                 | `LOG_LEVEL`                | `info`     | `fatal`, `error`, `warn`, `info`, `debug`, `trace`.                  |
@@ -554,6 +625,14 @@ cancel another's transfer-in-progress even if they learn the id. Creation is als
 refused when it would push free disk below `minFreeDiskBytes`, or the sender past
 `perUserUploadBytes`.
 
+**Identity is the work email address.** It is the unique key, the sign-in
+credential and what the recipient picker matches on; the `X.Lastname` display name
+is derived from it (`j.johnson@betlive.com` → `J.Johnson`) and only has to be
+readable, so two people with the same name are told apart by their addresses rather
+than being refused. Because only the office mail system can deliver to an allowed
+domain, receiving a link at one is what proves somebody works here — which is why
+there is no separate staff list to keep in step.
+
 **Authentication.** Passwords are hashed with scrypt from Node's standard library — no
 native module to compile, memory-hard enough that a stolen database is not a list of
 passwords. Sign-in sets an `httpOnly` cookie holding a random token; the database stores
@@ -570,7 +649,9 @@ name; the admin token per IP. Changing a password invalidates every other sessio
 | ------ | --------------------------------------- | ------------------------------------------ |
 | GET    | `/api/bootstrap`                        | Server limits + remembered identity        |
 | GET    | `/api/users?q=`                         | Directory for the recipient picker         |
-| POST   | `/api/session`                          | Sign in (sets the session cookie)          |
+| POST   | `/api/session`                          | Sign in with email + password              |
+| POST   | `/api/register`                         | Ask for a sign-up link                     |
+| POST   | `/api/password/forgot`                  | Ask for a reset link                       |
 | DELETE | `/api/session`                          | Sign out                                   |
 | GET    | `/api/setup/check`                      | Validate a setup link before showing a form |
 | POST   | `/api/setup`                            | Set a first password from a link           |
@@ -588,6 +669,8 @@ name; the admin token per IP. Changing a password invalidates every other sessio
 | POST   | `/api/admin/users/:name/setup-link`     | Generate a one-time password link          |
 | POST   | `/api/admin/users/:name/sign-out`       | Sign someone out of every device           |
 | POST   | `/api/admin/users/:name/admin`          | Grant or revoke admin                      |
+| PUT    | `/api/admin/users/:name/email`          | Set or correct somebody's address          |
+| POST   | `/api/admin/mail/test`                  | Send a test message through the relay      |
 | DELETE | `/api/admin/users/:name`                | Remove someone from the directory          |
 | GET    | `/api/admin/transfers`                  | Every transfer on the server               |
 | DELETE | `/api/admin/transfers/:id`              | Force-delete a transfer                    |
@@ -627,8 +710,12 @@ Admin shows what transfers are using versus what is free on the drive. Lower
 transfers from the Admin table.
 
 **Somebody forgot their password.**
-Admin → find them → **Reset link**. Send them the link; it works once and expires in 72
-hours. There is no email in BetSend, so you distribute it yourself.
+They click *Forgotten it?* on the sign-in screen and a link is emailed to them. If mail
+is not working, Admin → find them → **Reset link** still produces one you can hand over.
+
+**Nobody is getting any email.**
+Admin → Email → **Send a test message**. It reports what the relay actually said. The
+usual cause is Exchange not permitting this machine's IP to relay.
 
 **Somebody lost a laptop.**
 Admin → find them → **Sign out everywhere**, then send a reset link. Their cookie stops

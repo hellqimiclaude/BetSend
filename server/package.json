@@ -22,12 +22,14 @@
     "better-sqlite3": "^13.0.3",
     "fastify": "^5.2.1",
     "mime-types": "^2.1.35",
+    "nodemailer": "^10.1.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "@types/mime-types": "^2.1.4",
     "@types/node": "^22.10.7",
+    "@types/nodemailer": "^8.0.2",
     "@types/ws": "^8.5.13",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"

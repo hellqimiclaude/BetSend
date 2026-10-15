@@ -43,14 +43,23 @@ export function resetState(): void {
   }
 }
 
-export async function makeUser(name: string, options: { password?: boolean; admin?: boolean } = {}): Promise<UserRow> {
-  const user = createUser(name, 'admin');
+/**
+ * A colleague. The address is the identity, so the display name is derived
+ * from it unless a test cares about the name specifically.
+ */
+export async function makeUser(
+  name: string,
+  options: { password?: boolean; admin?: boolean; email?: string } = {},
+): Promise<UserRow> {
+  const email = options.email ?? `${name.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@example.test`;
+  const user = createUser({ email, name, source: 'admin' });
   if (options.password !== false) {
     setPassword(user.id, await hashPassword(TEST_PASSWORD));
   }
   if (options.admin) {
     getDb().prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(user.id);
   }
+  getDb().prepare('UPDATE users SET email_verified_at = ? WHERE id = ?').run(Date.now(), user.id);
   return getDb().prepare('SELECT * FROM users WHERE id = ?').get(user.id) as UserRow;
 }
 

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { getDb, now } from '../db/index.js';
 import { config } from '../config.js';
 import { randomToken } from './passwords.js';
+import { appBaseUrl } from '../util/baseurl.js';
 import type { UserRow } from '../repos/users.js';
 
 /**
@@ -155,6 +156,6 @@ export function consumeSetupToken(token: string): void {
 }
 
 export function setupLinkFor(token: string): string {
-  const base = config.publicUrl || '';
-  return `${base}/#/setup?token=${encodeURIComponent(token)}`;
+  // Absolute, because these links are mostly read in a mailbox.
+  return `${appBaseUrl()}/#/setup?token=${encodeURIComponent(token)}`;
 }

@@ -152,16 +152,20 @@ export function Chip({
   online,
   children,
   onClick,
+  title,
 }: {
   active?: boolean;
   online?: boolean;
   children: ReactNode;
   onClick?: () => void;
+  /** Shown on hover — the person's address, to tell two J.Smiths apart. */
+  title?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      title={title}
       aria-pressed={active}
       className={classNames(
         'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition',

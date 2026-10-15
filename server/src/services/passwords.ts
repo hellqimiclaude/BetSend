@@ -77,20 +77,51 @@ export interface PasswordCheck {
 }
 
 /**
+ * Pull the parts of someone's identity worth checking a password against:
+ * the display name, the address, and the pieces of each. Short fragments are
+ * dropped, or every password containing "a" would be refused.
+ */
+function identityFragments(identifiers: string[]): string[] {
+  const out = new Set<string>();
+  for (const raw of identifiers) {
+    const value = String(raw ?? '').trim().toLowerCase();
+    if (!value) continue;
+    if (value.length >= 4) out.add(value);
+    // j.johnson@betlive.com -> j.johnson, j, johnson, betlive
+    for (const part of value.split(/[\s.@_\-+]+/)) {
+      if (part.length >= 4) out.add(part);
+    }
+    const local = value.split('@')[0];
+    if (local.length >= 4) out.add(local);
+  }
+  return [...out];
+}
+
+/**
  * Deliberately simple rules. Length does far more for real-world safety than
  * character-class requirements, which mostly produce `Password1!`.
+ *
+ * `identifiers` takes each piece separately rather than one joined string:
+ * joining them meant the check looked for the whole lot as a single substring,
+ * which no password ever contains, and the rule quietly stopped working.
  */
-export function checkPasswordStrength(password: string, userName: string): PasswordCheck {
+export function checkPasswordStrength(
+  password: string,
+  identifiers: string | string[],
+): PasswordCheck {
   if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
     return { ok: false, error: `Please use at least ${MIN_PASSWORD_LENGTH} characters.` };
   }
   if (password.length > 200) {
     return { ok: false, error: 'That password is too long.' };
   }
+
   const lower = password.toLowerCase();
-  if (lower.includes(userName.toLowerCase())) {
-    return { ok: false, error: 'Please do not put your own name in your password.' };
+  const fragments = identityFragments(Array.isArray(identifiers) ? identifiers : [identifiers]);
+  if (fragments.some((fragment) => lower.includes(fragment))) {
+    return { ok: false, error: 'Please do not put your own name or email address in your password.' };
   }
+
   const tooCommon = ['password', 'betsend', '12345678', 'qwertyui', 'letmein', 'welcome'];
   if (tooCommon.some((bad) => lower.includes(bad))) {
     return { ok: false, error: 'That password is too easy to guess. Please pick another.' };

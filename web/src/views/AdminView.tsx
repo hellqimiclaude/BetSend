@@ -175,9 +175,9 @@ function AdminPanel({ onLock }: { onLock: (() => void) | null }) {
       </header>
 
       <StatsGrid overview={overview} />
+      <MailPanel overview={overview} onMessage={(kind, message) => toast(kind, message)} />
       <SettingsForm
         initial={overview.settings}
-        publicMode={overview.security.publicMode}
         onSaved={(settings, restartRequired) => {
           setOverview({ ...overview, settings });
           toast('success', restartRequired ? t('admin.restartNeeded') : t('admin.saved'));
@@ -256,6 +256,9 @@ function StatsGrid({ overview }: { overview: AdminOverview }) {
           {overview.security.publicMode ? t('admin.publicMode') : t('admin.lanMode')}
         </Badge>
         {notSetUp > 0 ? <Badge tone="slate">{t('admin.withoutPassword', { count: notSetUp })}</Badge> : null}
+        {overview.counts.withoutEmail > 0 ? (
+          <Badge tone="red">{t('admin.withoutEmail', { count: overview.counts.withoutEmail })}</Badge>
+        ) : null}
       </div>
       <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {stats.map((stat) => (
@@ -279,14 +282,93 @@ function StatsGrid({ overview }: { overview: AdminOverview }) {
   );
 }
 
+/**
+ * Mail is the one thing I cannot verify from here: every relay is different.
+ * The test button is how an admin finds out, and it reports whatever the
+ * server said rather than a generic failure.
+ */
+function MailPanel({
+  overview,
+  onMessage,
+}: {
+  overview: AdminOverview;
+  onMessage: (kind: 'success' | 'error' | 'info', message: string) => void;
+}) {
+  const [to, setTo] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const inputClass =
+    'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition ' +
+    'focus:border-brand-500 focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-950 ' +
+    'dark:focus:ring-brand-950';
+
+  async function sendTest() {
+    setBusy(true);
+    try {
+      await api.post('/api/admin/mail/test', { to: to.trim() });
+      onMessage('success', t('admin.mailTestSent'));
+    } catch (err) {
+      onMessage('error', (err as ApiError).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card className="p-4">
+      <SectionTitle hint={overview.mail.configured ? overview.mail.from : undefined}>
+        {t('admin.mail')}
+      </SectionTitle>
+
+      {overview.mail.configured ? (
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          {t('admin.mailConfigured', { host: overview.mail.host })}
+        </p>
+      ) : (
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+          {t('admin.mailMissing')}
+        </p>
+      )}
+
+      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+        {overview.mail.domains.length > 0
+          ? t('admin.mailDomains', { domains: overview.mail.domains.map((d) => '@' + d).join(', ') })
+          : t('admin.mailDomainsNone')}
+      </p>
+
+      {overview.mail.configured ? (
+        <div className="mt-3">
+          <label className="mb-1 block text-sm font-medium">{t('admin.mailTestTo')}</label>
+          <div className="flex gap-2">
+            <input
+              type="email"
+              value={to}
+              onChange={(event) => setTo(event.target.value)}
+              placeholder={overview.mail.from}
+              className={inputClass}
+            />
+            <Button
+              variant="secondary"
+              className="shrink-0"
+              loading={busy}
+              disabled={!to.trim()}
+              onClick={() => void sendTest()}
+            >
+              {t('admin.mailTest')}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
 function SettingsForm({
   initial,
-  publicMode,
   onSaved,
   onError,
 }: {
   initial: RuntimeSettings;
-  publicMode: boolean;
   onSaved: (settings: RuntimeSettings, restartRequired: boolean) => void;
   onError: (message: string) => void;
 }) {
@@ -356,34 +438,6 @@ function SettingsForm({
           </select>
         </label>
 
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium">{t('admin.signupMode')}</span>
-          <select
-            value={form.signupMode}
-            disabled={publicMode}
-            onChange={(event) =>
-              setForm({ ...form, signupMode: event.target.value as RuntimeSettings['signupMode'] })
-            }
-            className={classNames(inputClass, publicMode && 'opacity-60')}
-          >
-            <option value="invite">{t('admin.signupInvite')}</option>
-            <option value="claim">{t('admin.signupClaim')}</option>
-          </select>
-          {publicMode ? (
-            <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">
-              {t('admin.signupClaimBlocked')}
-            </span>
-          ) : null}
-        </label>
-
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium">{t('admin.directory')}</span>
-          <input
-            value={form.storageDir}
-            onChange={(event) => setForm({ ...form, storageDir: event.target.value })}
-            className={inputClass}
-          />
-        </label>
       </div>
 
       <label className="mt-4 flex items-center gap-2.5">
@@ -424,6 +478,17 @@ function UsersSection({
   async function makeLink(name: string) {
     try {
       setLink(await api.post<SetupLink>(`/api/admin/users/${encodeURIComponent(name)}/setup-link`));
+      onChanged();
+    } catch (err) {
+      onMessage('error', (err as ApiError).message);
+    }
+  }
+
+  async function askForEmail(name: string, current: string | null) {
+    const value = window.prompt(t('admin.emailPrompt', { name }), current ?? '');
+    if (value === null) return;
+    try {
+      await api.put(`/api/admin/users/${encodeURIComponent(name)}/email`, { email: value.trim() });
       onChanged();
     } catch (err) {
       onMessage('error', (err as ApiError).message);
@@ -514,6 +579,11 @@ function UsersSection({
               />
               <span className="min-w-0 flex-1 truncate text-sm">{user.name}</span>
 
+              {!user.email ? (
+                <Badge tone="red">{t('admin.noEmail')}</Badge>
+              ) : (
+                <span className="hidden shrink-0 text-xs text-slate-500 sm:block">{user.email}</span>
+              )}
               {!user.hasPassword ? (
                 <Badge tone="amber">{t('admin.notSetUp')}</Badge>
               ) : (
@@ -529,6 +599,13 @@ function UsersSection({
                 onClick={() => void makeLink(user.name)}
               >
                 {user.hasPassword ? t('admin.resetLink') : t('admin.setupLink')}
+              </Button>
+              <Button
+                variant="ghost"
+                className="shrink-0 px-2 py-1 text-xs"
+                onClick={() => void askForEmail(user.name, user.email)}
+              >
+                {t('admin.setEmail')}
               </Button>
               <Button
                 variant="ghost"

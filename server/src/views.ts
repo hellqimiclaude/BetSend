@@ -42,6 +42,8 @@ export interface TransferView {
 
 export interface UserView {
   name: string;
+  /** The work address: what makes two people with the same name distinct. */
+  email: string | null;
   online: boolean;
   lastSeenAt: number | null;
   source: 'self' | 'admin';
@@ -53,6 +55,7 @@ export interface UserView {
 export function toUserView(row: UserRow): UserView {
   return {
     name: row.name,
+    email: row.email,
     online: isOnline(row.name),
     lastSeenAt: row.last_seen_at,
     source: row.source,

@@ -2,6 +2,7 @@
 
 export interface UserView {
   name: string;
+  email: string | null;
   online: boolean;
   lastSeenAt: number | null;
   source: 'self' | 'admin';
@@ -13,11 +14,13 @@ export interface AdminUserView extends UserView {
   active: boolean;
   createdAt: number;
   passwordSetAt: number | null;
+  emailVerifiedAt: number | null;
   activeSessions: number;
 }
 
 export interface SetupLink {
   name: string;
+  email?: string | null;
   link: string;
   needsPublicUrl: boolean;
   expiresInHours: number;
@@ -58,7 +61,10 @@ export interface TransferView {
 export interface Bootstrap {
   app: { name: string; version: string };
   registrationMode: 'open' | 'list';
-  signupMode: 'invite' | 'claim';
+  /** Addresses must end in one of these to register. Empty means no check. */
+  emailDomains: string[];
+  /** Without a mail relay there is no registration and no password reset. */
+  mailConfigured: boolean;
   publicMode: boolean;
   minPasswordLength: number;
   namePattern: string;
@@ -78,7 +84,6 @@ export interface RuntimeSettings {
   deleteAfterAllDownloaded: boolean;
   registrationMode: 'open' | 'list';
   storageDir: string;
-  signupMode: 'invite' | 'claim';
 }
 
 export interface AdminOverview {
@@ -89,7 +94,21 @@ export interface AdminOverview {
     diskFree: number;
     diskTotal: number;
   };
-  counts: { users: number; online: number; activeTransfers: number; withoutPassword: number };
+  counts: {
+    users: number;
+    online: number;
+    activeTransfers: number;
+    withoutPassword: number;
+    withoutEmail: number;
+  };
+  mail: {
+    configured: boolean;
+    host: string;
+    from: string;
+    domains: string[];
+    notifyByEmail: boolean;
+    requireAdminApproval: boolean;
+  };
   security: { publicMode: boolean; behindProxy: boolean; publicUrl: string };
   settings: RuntimeSettings;
   server: {

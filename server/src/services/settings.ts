@@ -10,14 +10,13 @@ export interface RuntimeSettings {
   retentionHours: number;
   maxUploadSize: number; // bytes; 0 = unlimited
   deleteAfterAllDownloaded: boolean;
+  /**
+   * Who may register.
+   *   open — anybody with an address on an allowed domain
+   *   list — only addresses an admin has already imported
+   */
   registrationMode: 'open' | 'list';
   storageDir: string;
-  /**
-   * How someone gets their first password.
-   *   invite — only via a one-time link an admin generated (default when public)
-   *   claim  — anyone whose name is on the staff list can set one themselves
-   */
-  signupMode: 'invite' | 'claim';
 }
 
 const KEYS: (keyof RuntimeSettings)[] = [
@@ -26,7 +25,6 @@ const KEYS: (keyof RuntimeSettings)[] = [
   'deleteAfterAllDownloaded',
   'registrationMode',
   'storageDir',
-  'signupMode',
 ];
 
 function defaults(): RuntimeSettings {
@@ -36,9 +34,6 @@ function defaults(): RuntimeSettings {
     deleteAfterAllDownloaded: config.deleteAfterAllDownloaded,
     registrationMode: config.registrationMode,
     storageDir: config.storageDir,
-    // Exposed to the internet, an open claim flow is a land-grab; require an
-    // invite unless an admin deliberately relaxes it.
-    signupMode: config.publicMode ? 'invite' : 'claim',
   };
 }
 
@@ -67,9 +62,6 @@ export function getSettings(): RuntimeSettings {
         break;
       case 'registrationMode':
         out[key] = raw === 'list' ? 'list' : 'open';
-        break;
-      case 'signupMode':
-        out[key] = raw === 'claim' ? 'claim' : 'invite';
         break;
       case 'storageDir':
         if (raw) out[key] = raw;

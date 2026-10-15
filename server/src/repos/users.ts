@@ -1,5 +1,6 @@
 import { getDb, now } from '../db/index.js';
 import { nameKey, normalizeName } from '../util/names.js';
+import { displayNameFromEmail, emailKey, normalizeEmail } from '../util/email.js';
 
 export interface UserRow {
   id: number;
@@ -13,12 +14,23 @@ export interface UserRow {
   password_hash: string | null;
   password_set_at: number | null;
   is_admin: number;
+  /** The work email address: the identity people sign in with. */
+  email: string | null;
+  email_key: string | null;
+  /** Set when they followed the link sent to that address. */
+  email_verified_at: number | null;
 }
 
 export function findByName(raw: string): UserRow | undefined {
   return getDb()
     .prepare('SELECT * FROM users WHERE name_key = ?')
     .get(nameKey(raw)) as UserRow | undefined;
+}
+
+export function findByEmail(raw: string): UserRow | undefined {
+  const key = emailKey(raw);
+  if (!key) return undefined;
+  return getDb().prepare('SELECT * FROM users WHERE email_key = ?').get(key) as UserRow | undefined;
 }
 
 export function findById(id: number): UserRow | undefined {
@@ -32,54 +44,95 @@ export function listUsers(includeInactive = false): UserRow[] {
   return getDb().prepare(sql).all() as UserRow[];
 }
 
-export function createUser(raw: string, source: 'self' | 'admin'): UserRow {
-  const name = normalizeName(raw);
-  const key = nameKey(raw);
-  const db = getDb();
+export interface NewUser {
+  email: string;
+  /** Defaults to one derived from the address, e.g. j.johnson@ -> J.Johnson. */
+  name?: string;
+  source?: 'self' | 'admin';
+}
 
-  const existing = db.prepare('SELECT * FROM users WHERE name_key = ?').get(key) as UserRow | undefined;
+/**
+ * Create (or revive) an account keyed on its work email address.
+ *
+ * The display name only has to be unique enough to read; two people called
+ * J.Smith are told apart by their addresses, so a clash just gets a suffix
+ * rather than being refused.
+ */
+export function createUser(input: NewUser): UserRow {
+  const db = getDb();
+  const email = normalizeEmail(input.email);
+  const key = emailKey(email);
+
+  const existing = findByEmail(email);
   if (existing) {
-    // Re-activate a previously removed name rather than creating a duplicate.
     if (!existing.active) {
-      db.prepare('UPDATE users SET active = 1, source = ? WHERE id = ?').run(source, existing.id);
+      db.prepare('UPDATE users SET active = 1, source = ? WHERE id = ?').run(
+        input.source ?? 'admin',
+        existing.id,
+      );
       return findById(existing.id)!;
     }
     return existing;
   }
 
+  const wanted = normalizeName(input.name || displayNameFromEmail(email)) || displayNameFromEmail(email);
+  let name = wanted;
+  let suffix = 2;
+  while (db.prepare('SELECT 1 FROM users WHERE name_key = ?').get(nameKey(name))) {
+    name = `${wanted} (${suffix++})`;
+  }
+
   const info = db
-    .prepare('INSERT INTO users (name, name_key, source, created_at, active) VALUES (?, ?, ?, ?, 1)')
-    .run(name, key, source, now());
+    .prepare(
+      `INSERT INTO users (name, name_key, source, created_at, active, email, email_key)
+       VALUES (?, ?, ?, ?, 1, ?, ?)`,
+    )
+    .run(name, nameKey(name), input.source ?? 'admin', now(), email, key);
   return findById(Number(info.lastInsertRowid))!;
 }
 
-/** Bulk import from the admin page. Returns per-name outcomes. */
-export function importUsers(names: { value: string; key: string }[]): { added: string[]; existing: string[] } {
+export function markEmailVerified(id: number): void {
+  getDb()
+    .prepare('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?')
+    .run(now(), id);
+}
+
+export function setEmail(id: number, raw: string): void {
+  getDb()
+    .prepare('UPDATE users SET email = ?, email_key = ?, email_verified_at = NULL WHERE id = ?')
+    .run(normalizeEmail(raw), emailKey(raw), id);
+}
+
+/** Accounts an admin still has to fill an address in for. */
+export function countWithoutEmail(): number {
+  const row = getDb()
+    .prepare('SELECT COUNT(*) AS n FROM users WHERE active = 1 AND (email_key IS NULL OR email_key = \'\')')
+    .get() as { n: number };
+  return row.n;
+}
+
+/** Bulk import from the admin page, keyed on email address. */
+export function importUsers(
+  people: { email: string; key: string; name: string }[],
+): { added: string[]; existing: string[] } {
   const db = getDb();
   const added: string[] = [];
   const existing: string[] = [];
 
   const run = db.transaction(() => {
-    for (const n of names) {
-      const found = db.prepare('SELECT id, active FROM users WHERE name_key = ?').get(n.key) as
-        | { id: number; active: number }
-        | undefined;
+    for (const person of people) {
+      const found = findByEmail(person.email);
       if (found) {
         if (!found.active) {
           db.prepare('UPDATE users SET active = 1 WHERE id = ?').run(found.id);
-          added.push(n.value);
+          added.push(person.email);
         } else {
-          existing.push(n.value);
+          existing.push(person.email);
         }
         continue;
       }
-      db.prepare('INSERT INTO users (name, name_key, source, created_at, active) VALUES (?, ?, ?, ?, 1)').run(
-        n.value,
-        n.key,
-        'admin',
-        now(),
-      );
-      added.push(n.value);
+      createUser({ email: person.email, name: person.name, source: 'admin' });
+      added.push(person.email);
     }
   });
   run();

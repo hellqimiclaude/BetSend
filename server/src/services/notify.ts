@@ -1,10 +1,32 @@
 import { sendToUserId } from '../ws/hub.js';
 import { recipientUserIds, unreadCount, type TransferRow } from '../repos/transfers.js';
 import { findById } from '../repos/users.js';
+import { config } from '../config.js';
+import { mailConfigured, newTransferMessage, send } from '../services/mail.js';
+import { appBaseUrl } from '../util/baseurl.js';
+import { formatBytes } from '../util/format.js';
 
-/** Push a "you have a new transfer" event to everyone it was addressed to. */
+const DAY = new Intl.DateTimeFormat('en-GB', {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+/**
+ * Tell everyone the transfer was addressed to.
+ *
+ * The websocket only reaches people with the app open. Store-and-forward
+ * means the recipient usually does not, so without the email a transfer can
+ * sit unread until it expires - which is the app failing at its one job.
+ * Mail is sent in the background: a relay that is down must never stop
+ * somebody sending a file.
+ */
 export function notifyNewTransfer(transfer: TransferRow, senderName: string): void {
-  for (const userId of recipientUserIds(transfer.id)) {
+  const recipients = recipientUserIds(transfer.id);
+
+  for (const userId of recipients) {
     sendToUserId(userId, {
       type: 'transfer:new',
       transferId: transfer.id,
@@ -15,6 +37,29 @@ export function notifyNewTransfer(transfer: TransferRow, senderName: string): vo
       unread: unreadCount(userId),
     });
   }
+
+  if (!config.notifyByEmail || !mailConfigured()) return;
+
+  const link = `${appBaseUrl()}/#/inbox`;
+  const expires = DAY.format(new Date(transfer.expires_at));
+
+  void Promise.all(
+    recipients.map((userId) => {
+      const person = findById(userId);
+      if (!person?.email) return Promise.resolve(false);
+      return send(
+        newTransferMessage({
+          to: person.email,
+          from: senderName,
+          fileCount: transfer.file_count,
+          totalSize: formatBytes(transfer.total_size),
+          note: transfer.note,
+          expires: expires,
+          link,
+        }),
+      );
+    }),
+  );
 }
 
 export function notifyTransferGone(

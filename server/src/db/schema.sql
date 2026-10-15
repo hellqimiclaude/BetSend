@@ -10,7 +10,14 @@ CREATE TABLE IF NOT EXISTS users (
   active          INTEGER NOT NULL DEFAULT 1,
   password_hash   TEXT,                    -- null until the person sets one
   password_set_at INTEGER,
-  is_admin        INTEGER NOT NULL DEFAULT 0
+  is_admin        INTEGER NOT NULL DEFAULT 0,
+  -- The work email address is the identity: it is what people sign in with,
+  -- what the recipient picker matches on, and what proves somebody works
+  -- here. Nullable only so an existing database can be migrated; every new
+  -- account requires it.
+  email           TEXT,
+  email_key       TEXT,                    -- lowercased, for matching
+  email_verified_at INTEGER                -- set when they follow the link sent to it
 );
 
 -- Server-side sessions, so a login can be revoked centrally (a lost laptop
@@ -115,3 +122,4 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user       ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry     ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_setup_tokens_user   ON setup_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_uploads_user         ON uploads(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email    ON users(email_key) WHERE email_key IS NOT NULL;

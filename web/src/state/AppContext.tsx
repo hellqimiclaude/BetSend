@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { api, ApiError, setAdminToken, setSignedOutHandler } from '../lib/api';
-import { forgetName, rememberName } from '../lib/identity';
+import { forgetEmail, rememberEmail } from '../lib/identity';
 import { LiveConnection } from '../lib/ws';
 import { applyTheme, isDark, storedTheme, watchSystemTheme, type Theme } from '../lib/theme';
 import { t } from '../i18n';
@@ -39,8 +39,8 @@ interface AppState {
   /** Whether dark styling is currently applied (resolves `system`). */
   dark: boolean;
 
-  signIn: (name: string, password: string) => Promise<void>;
-  completeSetup: (input: { token?: string; name?: string; password: string }) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<void>;
+  completeSetup: (input: { token: string; password: string }) => Promise<void>;
   signOut: () => Promise<void>;
   refreshUsers: () => Promise<void>;
   refreshInbox: () => Promise<void>;
@@ -125,7 +125,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
         if (data.user) {
           setUser(data.user);
           setUnread(data.unread);
-          rememberName(data.user.name);
+          if (data.user.email) rememberEmail(data.user.email);
         }
         setReady(true);
       })
@@ -209,20 +209,20 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
   // ---- identity ----------------------------------------------------------
 
   const adopt = useCallback((data: { user: UserView; unread: number }) => {
-    rememberName(data.user.name);
+    if (data.user.email) rememberEmail(data.user.email);
     setUser(data.user);
     setUnread(data.unread);
   }, []);
 
   const signIn = useCallback(
-    async (name: string, password: string) => {
-      adopt(await api.post<{ user: UserView; unread: number }>('/api/session', { name, password }));
+    async (email: string, password: string) => {
+      adopt(await api.post<{ user: UserView; unread: number }>('/api/session', { email, password }));
     },
     [adopt],
   );
 
   const completeSetup = useCallback(
-    async (input: { token?: string; name?: string; password: string }) => {
+    async (input: { token: string; password: string }) => {
       adopt(await api.post<{ user: UserView; unread: number }>('/api/setup', input));
     },
     [adopt],
@@ -238,7 +238,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       // from this browser's point of view either way.
     }
     setAdminToken(null);
-    forgetName();
+    forgetEmail();
     setUser(null);
     setInbox([]);
     setSent([]);

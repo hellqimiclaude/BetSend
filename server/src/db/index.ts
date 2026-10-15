@@ -42,6 +42,9 @@ function migrate(db: DB): void {
     ['password_hash', 'TEXT'],
     ['password_set_at', 'INTEGER'],
     ['is_admin', 'INTEGER NOT NULL DEFAULT 0'],
+    ['email', 'TEXT'],
+    ['email_key', 'TEXT'],
+    ['email_verified_at', 'INTEGER'],
   ];
 
   for (const [name, definition] of additions) {
@@ -49,6 +52,12 @@ function migrate(db: DB): void {
       db.exec(`ALTER TABLE users ADD COLUMN ${name} ${definition}`);
     }
   }
+
+  // The unique index lives in schema.sql, but on an older database the column
+  // it covers has only just been added, so create it after the ALTERs.
+  db.exec(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email_key) WHERE email_key IS NOT NULL',
+  );
 }
 
 export function closeDb(): void {

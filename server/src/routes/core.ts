@@ -7,6 +7,7 @@ import { unreadCount } from '../repos/transfers.js';
 import { toUserView } from '../views.js';
 import { currentUser, optionalUser } from './auth.js';
 import { MIN_PASSWORD_LENGTH } from '../services/passwords.js';
+import { mailConfigured } from '../services/mail.js';
 
 export default async function coreRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -21,7 +22,10 @@ export default async function coreRoutes(app: FastifyInstance): Promise<void> {
     return {
       app: { name: 'BetSend', version: '1.1.0' },
       registrationMode: settings.registrationMode,
-      signupMode: settings.signupMode,
+      // The sign-in screen needs these to decide whether to offer "create an
+      // account" and "forgot password" at all.
+      emailDomains: config.emailDomains,
+      mailConfigured: mailConfigured(),
       namePattern: NAME_PATTERN_SOURCE,
       nameExample: NAME_EXAMPLE,
       minPasswordLength: MIN_PASSWORD_LENGTH,

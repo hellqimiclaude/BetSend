@@ -17,12 +17,17 @@ after(async () => {
   await app.close();
 });
 
+/** The address makeUser() derives for a given display name. */
+function addressFor(name: string): string {
+  return `${name.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@example.test`;
+}
+
 /** Sign in and return the raw cookie header to replay. */
 async function signIn(name: string, password = TEST_PASSWORD): Promise<string> {
   const response = await app.inject({
     method: 'POST',
     url: '/api/session',
-    payload: { name, password },
+    payload: { email: addressFor(name), password },
   });
   assert.equal(response.statusCode, 200, `sign-in for ${name} failed: ${response.body}`);
   const cookie = response.cookies.find((c) => c.name === 'bs_session');
@@ -98,7 +103,7 @@ describe('signing in', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/session',
-      payload: { name: 'J.Johnson', password: TEST_PASSWORD },
+      payload: { email: addressFor('J.Johnson'), password: TEST_PASSWORD },
     });
 
     assert.equal(response.statusCode, 200);
@@ -114,12 +119,12 @@ describe('signing in', () => {
     const wrongPassword = await app.inject({
       method: 'POST',
       url: '/api/session',
-      payload: { name: 'J.Johnson', password: 'not-the-password' },
+      payload: { email: addressFor('J.Johnson'), password: 'not-the-password' },
     });
     const unknownName = await app.inject({
       method: 'POST',
       url: '/api/session',
-      payload: { name: 'Z.Nobody', password: 'not-the-password' },
+      payload: { email: 'z.nobody@example.test', password: 'not-the-password' },
     });
 
     assert.equal(wrongPassword.statusCode, unknownName.statusCode);
@@ -131,17 +136,17 @@ describe('signing in', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/session',
-      payload: { name: 'N.Newcomer', password: TEST_PASSWORD },
+      payload: { email: addressFor('N.Newcomer'), password: TEST_PASSWORD },
     });
     assert.equal(response.statusCode, 401);
   });
 
-  test('the name is matched case-insensitively', async () => {
+  test('the address is matched case-insensitively', async () => {
     await makeUser('J.Johnson');
     const response = await app.inject({
       method: 'POST',
       url: '/api/session',
-      payload: { name: 'j.JOHNSON', password: TEST_PASSWORD },
+      payload: { email: 'J.JOHNSON@EXAMPLE.TEST', password: TEST_PASSWORD },
     });
     assert.equal(response.statusCode, 200);
   });
@@ -210,7 +215,7 @@ describe('setup links', () => {
   test('weak passwords are refused with a reason', async () => {
     const user = await makeUser('N.Newcomer', { password: false });
 
-    for (const [password, reason] of [['short', /10 characters/i], ['N.Newcomer-is-me', /your own name/i]] as const) {
+    for (const [password, reason] of [['short', /10 characters/i], ['n.newcomer-is-me', /your own name/i]] as const) {
       const token = createSetupToken(user.id);
       const response = await app.inject({ method: 'POST', url: '/api/setup', payload: { token, password } });
       assert.equal(response.statusCode, 400);

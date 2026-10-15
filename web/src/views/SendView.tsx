@@ -37,7 +37,13 @@ export function SendView() {
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return directory;
-    return directory.filter((person) => person.name.toLowerCase().includes(needle));
+    // Match the address as well: two people can share a display name, and
+    // typing the start of an address is how most people search.
+    return directory.filter(
+      (person) =>
+        person.name.toLowerCase().includes(needle) ||
+        (person.email ?? '').toLowerCase().includes(needle),
+    );
   }, [directory, query]);
 
   const totalBytes = useMemo(() => files.reduce((sum, file) => sum + file.size, 0), [files]);
@@ -257,6 +263,7 @@ export function SendView() {
             disabled={busy}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={t('send.searchPeople')}
+            type="search"
             className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:focus:ring-brand-950"
           />
         </div>
@@ -273,6 +280,7 @@ export function SendView() {
                 active={selected.includes(person.name)}
                 online={online.has(person.name.toLowerCase())}
                 onClick={busy ? undefined : () => toggleRecipient(person.name)}
+                title={person.email ?? undefined}
               >
                 {person.name}
               </Chip>

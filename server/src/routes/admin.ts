@@ -2,10 +2,12 @@ import type { FastifyInstance } from 'fastify';
 import { config, paths } from '../config.js';
 import { requireAdmin } from './auth.js';
 import { badRequest, notFound } from '../util/errors.js';
-import { parseNameList } from '../util/names.js';
+import { parseEmailList, validateEmail } from '../util/email.js';
 import {
   countUsers,
+  countWithoutEmail,
   countWithoutPassword,
+  setEmail,
   deactivateUser,
   findByName,
   importUsers,
@@ -32,6 +34,8 @@ import { getSettings, updateSettings, type RuntimeSettings } from '../services/s
 import { sweep } from '../services/cleanup.js';
 import { notifyTransferGone } from '../services/notify.js';
 import { onlineUserNames } from '../ws/hub.js';
+import { findByEmail } from '../repos/users.js';
+import { mailConfigured, sendOrThrow, testMessage, verifyConnection } from '../services/mail.js';
 import { findById } from '../repos/users.js';
 import { toUserView } from '../views.js';
 
@@ -57,6 +61,15 @@ export default async function adminRoutes(app: FastifyInstance): Promise<void> {
         online: onlineUserNames().length,
         activeTransfers: activeTransferCount(),
         withoutPassword: countWithoutPassword(),
+        withoutEmail: countWithoutEmail(),
+      },
+      mail: {
+        configured: mailConfigured(),
+        host: config.smtpHost,
+        from: config.smtpFrom,
+        domains: config.emailDomains,
+        notifyByEmail: config.notifyByEmail,
+        requireAdminApproval: config.requireAdminApproval,
       },
       security: {
         publicMode: config.publicMode,
@@ -103,18 +116,6 @@ export default async function adminRoutes(app: FastifyInstance): Promise<void> {
       patch.registrationMode = mode;
     }
 
-    if (body.signupMode !== undefined) {
-      const mode = String(body.signupMode);
-      if (mode !== 'invite' && mode !== 'claim') throw badRequest('Unknown sign-up mode.', 'bad_signup_mode');
-      if (mode === 'claim' && config.publicMode) {
-        throw badRequest(
-          'Self-service sign-up cannot be turned on while BetSend is reachable from the internet — anyone could claim a colleague\'s name. Send setup links instead.',
-          'claim_blocked_in_public_mode',
-        );
-      }
-      patch.signupMode = mode;
-    }
-
     if (body.storageDir !== undefined) {
       const dir = String(body.storageDir).trim();
       if (!dir) throw badRequest('Storage directory cannot be empty.', 'bad_storage_dir');
@@ -137,6 +138,8 @@ export default async function adminRoutes(app: FastifyInstance): Promise<void> {
         ...toUserView(u),
         active: Boolean(u.active),
         createdAt: u.created_at,
+        email: u.email,
+        emailVerifiedAt: u.email_verified_at,
         passwordSetAt: u.password_set_at,
         activeSessions: sessionCountFor(u.id),
       })),
@@ -192,15 +195,52 @@ export default async function adminRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/admin/users/import', async (request) => {
     const body = (request.body ?? {}) as { text?: unknown };
     const text = typeof body.text === 'string' ? body.text : '';
-    if (!text.trim()) throw badRequest('Paste at least one name.', 'empty_import');
+    if (!text.trim()) throw badRequest('Paste at least one email address.', 'empty_import');
 
-    const { valid, invalid } = parseNameList(text);
+    const { valid, invalid } = parseEmailList(text);
     if (valid.length === 0) {
       return { added: [], existing: [], invalid };
     }
-    const { added, existing } = importUsers(valid.map((v) => ({ value: v.value, key: v.key })));
+    const { added, existing } = importUsers(valid);
     logEvent('admin.users.import', null, null, `${added.length} added`);
     return { added, existing, invalid };
+  });
+
+  /** Fill in or correct somebody's address. */
+  app.put('/api/admin/users/:name/email', async (request) => {
+    const { name } = request.params as { name: string };
+    const body = (request.body ?? {}) as { email?: unknown };
+    const user = findByName(decodeURIComponent(name));
+    if (!user) throw notFound('No such user.', 'user_not_found');
+
+    const check = validateEmail(typeof body.email === 'string' ? body.email : '');
+    if (!check.ok) throw badRequest(check.error!, 'invalid_email');
+
+    const clash = findByEmail(check.value);
+    if (clash && clash.id !== user.id) {
+      throw badRequest(`${check.value} already belongs to ${clash.name}.`, 'email_taken');
+    }
+
+    setEmail(user.id, check.value);
+    logEvent('admin.users.email', null, user.id);
+    return { ok: true };
+  });
+
+  /** Send a message to one address, to prove the relay works. */
+  app.post('/api/admin/mail/test', async (request) => {
+    const body = (request.body ?? {}) as { to?: unknown };
+    const check = validateEmail(typeof body.to === 'string' ? body.to : '');
+    if (!check.ok) throw badRequest(check.error!, 'invalid_email');
+
+    try {
+      await verifyConnection();
+      await sendOrThrow(testMessage(check.value));
+    } catch (err) {
+      // The relay's own words are far more useful than anything generic.
+      throw badRequest(`The mail server refused it: ${(err as Error).message}`, 'mail_failed');
+    }
+    logEvent('admin.mail.test', null, null, check.value);
+    return { ok: true };
   });
 
   app.delete('/api/admin/users/:name', async (request) => {

@@ -7,6 +7,7 @@ import { AuthShell, fieldClass } from './SignIn';
 
 interface CheckedLink {
   name: string;
+  email: string | null;
   isReset: boolean;
 }
 
@@ -18,13 +19,11 @@ interface CheckedLink {
 export function SetPassword({ token, onBack }: { token: string | null; onBack: () => void }) {
   const { bootstrap, completeSetup } = useApp();
   const minLength = bootstrap?.minPasswordLength ?? 10;
-  const example = bootstrap?.nameExample ?? 'J.Johnson';
 
-  const [checking, setChecking] = useState(Boolean(token));
+  const [checking, setChecking] = useState(true);
   const [linkUser, setLinkUser] = useState<CheckedLink | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
 
-  const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
@@ -33,7 +32,11 @@ export function SetPassword({ token, onBack }: { token: string | null; onBack: (
   // Validate the link before showing the form, so an expired one is not
   // discovered only after typing a password twice.
   useEffect(() => {
-    if (!token) return;
+    if (!token) {
+      setLinkError(t('setup.badLink'));
+      setChecking(false);
+      return;
+    }
     let cancelled = false;
 
     api
@@ -61,7 +64,7 @@ export function SetPassword({ token, onBack }: { token: string | null; onBack: (
 
     setBusy(true);
     try {
-      await completeSetup(token ? { token, password } : { name: name.trim(), password });
+      await completeSetup({ token: token!, password });
     } catch (err) {
       setError((err as ApiError).message);
     } finally {
@@ -91,9 +94,11 @@ export function SetPassword({ token, onBack }: { token: string | null; onBack: (
   }
 
   const subtitle = linkUser
-    ? linkUser.isReset
-      ? t('setup.resetSubtitle', { name: linkUser.name })
-      : t('setup.subtitle', { name: linkUser.name })
+    ? `${
+        linkUser.isReset
+          ? t('setup.resetSubtitle', { name: linkUser.name })
+          : t('setup.subtitle', { name: linkUser.name })
+      }${linkUser.email ? ' ' + t('setup.forEmail', { email: linkUser.email }) : ''}`
     : t('setup.subtitleGeneric');
 
   return (
@@ -108,24 +113,6 @@ export function SetPassword({ token, onBack }: { token: string | null; onBack: (
           void submit();
         }}
       >
-        {!linkUser ? (
-          <>
-            <label htmlFor="setup-name" className="mb-1 block text-sm font-medium">
-              {t('setup.name')}
-            </label>
-            <input
-              id="setup-name"
-              autoComplete="username"
-              autoFocus
-              spellCheck={false}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder={t('signin.namePlaceholder', { example })}
-              className={`${fieldClass} mb-4`}
-            />
-          </>
-        ) : null}
-
         <label htmlFor="setup-password" className="mb-1 block text-sm font-medium">
           {t('setup.password')}
         </label>
@@ -169,7 +156,7 @@ export function SetPassword({ token, onBack }: { token: string | null; onBack: (
           type="submit"
           variant="primary"
           loading={busy}
-          disabled={!password || !confirm || (!linkUser && !name.trim())}
+          disabled={!password || !confirm}
           className="mt-4 w-full"
         >
           {busy ? t('setup.working') : t('setup.submit')}

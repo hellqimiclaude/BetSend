@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useApp } from './state/AppContext';
 import { Sidebar } from './components/Sidebar';
 import { Toasts } from './components/Toasts';
-import { SignIn } from './views/SignIn';
+import { SignIn, RequestLink } from './views/SignIn';
 import { SetPassword } from './views/SetPassword';
 import { SendView } from './views/SendView';
 import { InboxView } from './views/InboxView';
@@ -22,7 +22,7 @@ function viewFromHash(): View {
 }
 
 interface AuthRoute {
-  screen: 'signin' | 'setup';
+  screen: 'signin' | 'setup' | 'register' | 'forgot';
   token: string | null;
 }
 
@@ -32,6 +32,9 @@ function authFromHash(): AuthRoute {
   const [path, query] = raw.split('?');
   if (path === 'setup') {
     return { screen: 'setup', token: new URLSearchParams(query ?? '').get('token') };
+  }
+  if (path === 'register' || path === 'forgot') {
+    return { screen: path, token: null };
   }
   return { screen: 'signin', token: null };
 }
@@ -64,7 +67,7 @@ export function App() {
   }
 
   function goAuth(screen: AuthRoute['screen']) {
-    window.location.hash = screen === 'setup' ? '/setup' : '/signin';
+    window.location.hash = screen === 'signin' ? '/signin' : `/${screen}`;
     setAuth({ screen, token: null });
   }
 
@@ -87,11 +90,14 @@ export function App() {
   }
 
   if (!user) {
-    // A setup link points at #/setup?token=… — honour it before the sign-in form.
+    // A link from an email points at #/setup?token=… — honour it first.
     if (auth.screen === 'setup') {
       return <SetPassword token={auth.token} onBack={() => goAuth('signin')} />;
     }
-    return <SignIn onNeedSetup={() => goAuth('setup')} />;
+    if (auth.screen === 'register' || auth.screen === 'forgot') {
+      return <RequestLink mode={auth.screen} onBack={() => goAuth('signin')} />;
+    }
+    return <SignIn onRegister={() => goAuth('register')} onForgot={() => goAuth('forgot')} />;
   }
 
   return (

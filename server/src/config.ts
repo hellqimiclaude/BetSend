@@ -50,6 +50,34 @@ export interface AppConfig {
   publicUrl: string;
   /** How long a login lasts before the user must sign in again. */
   sessionDays: number;
+
+  // --- mail --------------------------------------------------------------
+  /**
+   * The office mail relay. Exchange on the LAN normally accepts unauthenticated
+   * mail from an internal address on port 25, which is why user and password
+   * are optional and `secure` defaults off.
+   */
+  smtpHost: string;
+  smtpPort: number;
+  /** Implicit TLS from the first byte (port 465). Exchange rarely uses this. */
+  smtpSecure: boolean;
+  /** Upgrade to TLS with STARTTLS where the relay offers it. */
+  smtpRequireTls: boolean;
+  /** Internal relays often present a self-signed certificate. */
+  smtpRejectUnauthorized: boolean;
+  smtpUser: string;
+  smtpPassword: string;
+  /** Envelope sender, e.g. "BetSend <betsend@company.com>". */
+  smtpFrom: string;
+  /**
+   * Addresses must end in one of these to register. This is what replaces a
+   * hand-curated staff list: only the office mail system can deliver to them.
+   */
+  emailDomains: string[];
+  /** Make an admin approve each new account even after the address is verified. */
+  requireAdminApproval: boolean;
+  /** Email recipients when files arrive. The point of store-and-forward. */
+  notifyByEmail: boolean;
 }
 
 const DEFAULTS = {
@@ -71,6 +99,19 @@ const DEFAULTS = {
   behindProxy: false,
   publicUrl: '',
   sessionDays: 30,
+  smtpHost: '',
+  smtpPort: 25,
+  smtpSecure: false,
+  smtpRequireTls: false,
+  smtpRejectUnauthorized: false,
+  smtpUser: '',
+  smtpPassword: '',
+  smtpFrom: '',
+  // The office domain. Only addresses here can register, which is what
+  // proves somebody works at BetLive. Override for a different company.
+  emailDomains: ['betlive.com'] as string[],
+  requireAdminApproval: false,
+  notifyByEmail: true,
 };
 
 /** Absolute path of the config file that was loaded, for logging. */
@@ -123,6 +164,22 @@ function pickNumber(env: string | undefined, file: unknown, fallback: number): n
   if (raw === undefined || raw === null || raw === '') return fallback;
   const n = Number(raw);
   return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * A comma-separated env var, or a JSON array in the config file.
+ *
+ * An explicitly empty list is honoured as "no restriction" rather than
+ * falling back to the default, so an admin can genuinely turn the check off.
+ */
+function pickList(env: string | undefined, file: unknown, fallback: string[]): string[] {
+  const source = env !== undefined ? env : file;
+  if (source === undefined || source === null) return fallback;
+  if (Array.isArray(source)) return source.map((v) => String(v).trim()).filter(Boolean);
+  if (typeof source === 'string') {
+    return source.split(',').map((v) => v.trim()).filter(Boolean);
+  }
+  return fallback;
 }
 
 function pickBool(env: string | undefined, file: unknown, fallback: boolean): boolean {
@@ -188,6 +245,26 @@ export function loadConfig(): AppConfig {
     ),
     publicUrl: pickString(process.env.PUBLIC_URL, file.publicUrl, DEFAULTS.publicUrl).replace(/\/+$/, ''),
     sessionDays: pickNumber(process.env.SESSION_DAYS, file.sessionDays, DEFAULTS.sessionDays),
+
+    smtpHost: pickString(process.env.SMTP_HOST, file.smtpHost, DEFAULTS.smtpHost),
+    smtpPort: pickNumber(process.env.SMTP_PORT, file.smtpPort, DEFAULTS.smtpPort),
+    smtpSecure: pickBool(process.env.SMTP_SECURE, file.smtpSecure, DEFAULTS.smtpSecure),
+    smtpRequireTls: pickBool(process.env.SMTP_REQUIRE_TLS, file.smtpRequireTls, DEFAULTS.smtpRequireTls),
+    smtpRejectUnauthorized: pickBool(
+      process.env.SMTP_REJECT_UNAUTHORIZED,
+      file.smtpRejectUnauthorized,
+      DEFAULTS.smtpRejectUnauthorized,
+    ),
+    smtpUser: pickString(process.env.SMTP_USER, file.smtpUser, DEFAULTS.smtpUser),
+    smtpPassword: pickString(process.env.SMTP_PASSWORD, file.smtpPassword, DEFAULTS.smtpPassword),
+    smtpFrom: pickString(process.env.SMTP_FROM, file.smtpFrom, DEFAULTS.smtpFrom),
+    emailDomains: pickList(process.env.EMAIL_DOMAINS, file.emailDomains, DEFAULTS.emailDomains),
+    requireAdminApproval: pickBool(
+      process.env.REQUIRE_ADMIN_APPROVAL,
+      file.requireAdminApproval,
+      DEFAULTS.requireAdminApproval,
+    ),
+    notifyByEmail: pickBool(process.env.NOTIFY_BY_EMAIL, file.notifyByEmail, DEFAULTS.notifyByEmail),
   };
 }
 

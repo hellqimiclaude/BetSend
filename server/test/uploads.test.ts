@@ -29,11 +29,15 @@ after(async () => {
 
 beforeEach(() => resetState());
 
+function addressFor(name: string): string {
+  return `${name.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@example.test`;
+}
+
 async function signIn(name: string): Promise<string> {
   const response = await fetch(`${base}/api/session`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, password: TEST_PASSWORD }),
+    body: JSON.stringify({ email: addressFor(name), password: TEST_PASSWORD }),
   });
   assert.equal(response.status, 200, `sign-in for ${name} failed`);
   const setCookie = response.headers.getSetCookie().find((c) => c.startsWith('bs_session='));
