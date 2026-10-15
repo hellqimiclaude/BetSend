@@ -1,7 +1,11 @@
-# Windows shells need CRLF; checking these out with LF breaks label handling
-# in cmd.exe and can confuse PowerShell's here-strings.
-*.bat text eol=crlf
-*.ps1 text eol=crlf
+# Store these byte-for-byte with CRLF rather than normalising to LF.
+#
+# `text eol=crlf` would convert on checkout but still store LF — and the
+# Windows setup file is meant to be downloaded straight from GitHub, which
+# serves what is stored. cmd.exe can mishandle labels and goto in a file with
+# LF endings, so the bytes have to be right in the repository itself.
+*.bat -text
+*.ps1 -text
 
 # Everything else stays LF, including the shell scripts.
 *.sh  text eol=lf
