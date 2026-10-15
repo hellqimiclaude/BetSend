@@ -2,7 +2,7 @@
   "name": "betsend",
   "version": "1.0.0",
   "private": true,
-  "description": "BetSend — self-hosted LAN file transfer web app",
+  "description": "BetSend \u2014 self-hosted LAN file transfer web app",
   "workspaces": [
     "server",
     "web"
@@ -14,7 +14,9 @@
     "build": "npm run build -w web && npm run build -w server",
     "start": "node server/dist/index.js",
     "seed": "npm run seed -w server",
-    "typecheck": "npm run typecheck -w server && npm run typecheck -w web"
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
+    "test": "npm run test -w server",
+    "check": "npm run typecheck && npm run test"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Catches type errors in the server, the tests and the frontend.
+      - run: npm run typecheck
+
+      # The retention sweeper deletes people's files on a timer, so these are
+      # the tests that matter most. They run against a throwaway SQLite
+      # database in a temp directory — nothing to set up.
+      - run: npm test
+
+      # A broken build is as bad as a failing test: the server serves the
+      # frontend from server/public, which only exists after this.
+      - run: npm run build

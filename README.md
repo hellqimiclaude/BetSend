@@ -435,8 +435,35 @@ Other scripts:
 | ------------------- | ------------------------------------------------------------------- |
 | `npm run build`     | Builds the frontend into `server/public`, then compiles the server. |
 | `npm start`         | Runs the compiled server (one process, one port).                   |
-| `npm run typecheck` | Type-checks both workspaces.                                        |
+| `npm test`          | Runs the test suite (~10 seconds, no setup).                        |
+| `npm run typecheck` | Type-checks both workspaces, tests included.                        |
+| `npm run check`     | Typecheck + tests. What CI runs.                                     |
 | `npm run seed`      | Adds the ten development users. Safe to re-run.                     |
+
+### Tests
+
+```bash
+npm test                      # everything
+npm run test:watch -w server  # re-run on save
+```
+
+110 tests on Node's built-in runner — no test framework to install. Each run gets a
+throwaway SQLite database in a temp directory, so there is nothing to set up and
+nothing to clean up.
+
+| File                 | Covers                                                               |
+| -------------------- | -------------------------------------------------------------------- |
+| `retention.test.ts`  | The sweeper and blob reference counting. The sharpest edge in the app: a bug here deletes somebody's files early or leaks disk forever, and neither is visible until a person complains. |
+| `auth.test.ts`       | Every endpoint's behaviour signed out, sign-in, setup links, admin, and one colleague's access to another's transfer. |
+| `uploads.test.ts`    | tus end to end against a real listening server: authentication, per-upload ownership, resume, quotas, ranged downloads, zips. |
+| `sessions.test.ts`   | Expiry, revocation, and that neither cookies nor setup links are stored in the clear. |
+| `passwords.test.ts`  | Hash/verify round trips and the strength rules.                      |
+| `names.test.ts`      | `X.Lastname` parsing and staff-list import, including the CSV and CRLF a real paste contains. |
+
+The suite is checked by mutation: deliberately removing the upload authentication
+fails 6 tests, zeroing a reference count instead of decrementing it fails 1, and
+ignoring the delete-after-download setting fails 1. A suite that never goes red is
+not protecting anything, so it is worth re-checking that way after adding to it.
 
 Layout:
 
