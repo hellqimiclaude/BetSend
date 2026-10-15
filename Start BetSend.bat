@@ -1,5 +1,5 @@
 @echo off
-REM Runs BetSend in this window — handy for a quick look or for troubleshooting.
+REM Runs BetSend in this window -- handy for a quick look or for troubleshooting.
 REM For everyday use install it properly with "Install BetSend.bat" so it starts
 REM with Windows and nobody has to leave a window open.
 
@@ -18,7 +18,7 @@ if errorlevel 1 (
 
 if not exist "server\dist\index.js" (
   echo.
-  echo   First run — building BetSend. This takes a minute.
+  echo   First run -- building BetSend. This takes a minute.
   echo.
   call npm install || goto :failed
   call npm run build || goto :failed

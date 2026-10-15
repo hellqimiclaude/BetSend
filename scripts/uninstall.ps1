@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Removes the scheduled task and the firewall rule. Your files, database and
-  config.json are left alone — delete the storage directory by hand if you
+  config.json are left alone -- delete the storage directory by hand if you
   want those gone too.
 
 .PARAMETER RemoveData

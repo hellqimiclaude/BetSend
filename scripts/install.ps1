@@ -3,7 +3,7 @@
   Installs BetSend as a always-on background service on this Windows machine.
 
 .DESCRIPTION
-  Idempotent — safe to run again after a `git pull` to rebuild and restart.
+  Idempotent -- safe to run again after a `git pull` to rebuild and restart.
   It will:
     1. check for Node.js 20+
     2. install dependencies and build the app
@@ -19,7 +19,7 @@
 
 .PARAMETER StorageDir
   Where uploaded files and the database live. Defaults to .\data next to the
-  app. Put this on a drive with room to spare. Must be a local path — the
+  app. Put this on a drive with room to spare. Must be a local path -- the
   service runs as SYSTEM and cannot reach mapped network drives.
 
 .PARAMETER NoService
@@ -117,7 +117,7 @@ $nodeExe     = $node.Source
 $nodeVersion = (& $nodeExe --version).TrimStart('v')
 $nodeMajor   = [int]($nodeVersion.Split('.')[0])
 if ($nodeMajor -lt 20) {
-  Stop-WithMessage "Node.js $nodeVersion is too old. BetSend needs 20 or newer — update from https://nodejs.org."
+  Stop-WithMessage "Node.js $nodeVersion is too old. BetSend needs 20 or newer -- update from https://nodejs.org."
 }
 Write-Ok "Node.js $nodeVersion at $nodeExe"
 
@@ -196,7 +196,7 @@ if (-not $NoService) {
                         -Direction Inbound -Action Allow -Protocol TCP `
                         -LocalPort $Port -Profile Private,Domain | Out-Null
     Write-Ok "TCP $Port allowed on private and domain networks"
-    Write-Note 'Public networks are deliberately excluded — this is a LAN-only tool.'
+    Write-Note 'Public networks are deliberately excluded -- this is a LAN-only tool.'
   } catch {
     Write-Host "    Could not add the firewall rule: $($_.Exception.Message)" -ForegroundColor Yellow
     Write-Host "    Add it by hand, or colleagues will not be able to connect." -ForegroundColor Yellow
@@ -229,7 +229,7 @@ if (-not $NoService) {
                          -Description 'BetSend office file transfer server' `
                          -Action $action -Trigger $trigger `
                          -Principal $principal -Settings $settings | Out-Null
-  Write-Ok 'registered — it will come back automatically after a reboot'
+  Write-Ok 'registered -- it will come back automatically after a reboot'
 
   Write-Step 'Starting BetSend'
   Start-ScheduledTask -TaskName $TaskName
@@ -258,7 +258,7 @@ $primary   = if ($addresses.Count -gt 0) { $addresses[0] } else { 'this-machine'
 $suffix    = if ($Port -eq 80) { '' } else { ":$Port" }
 
 Write-Host ''
-Write-Host '  ────────────────────────────────────────────────' -ForegroundColor DarkGray
+Write-Host '  ------------------------------------------------' -ForegroundColor DarkGray
 Write-Host '   BetSend is set up.' -ForegroundColor Green
 Write-Host ''
 Write-Host '   Send this address round the office:' -ForegroundColor White
@@ -281,7 +281,7 @@ Write-Host '     Restart      Restart-ScheduledTask -TaskName BetSend' -Foregrou
 Write-Host '     Stop         Stop-ScheduledTask    -TaskName BetSend' -ForegroundColor DarkGray
 Write-Host '     Logs         logs\betsend.log' -ForegroundColor DarkGray
 Write-Host '     Remove       scripts\uninstall.ps1' -ForegroundColor DarkGray
-Write-Host '  ────────────────────────────────────────────────' -ForegroundColor DarkGray
+Write-Host '  ------------------------------------------------' -ForegroundColor DarkGray
 Write-Host ''
 
 # A shortcut on the desktop so whoever runs the machine can check on it.

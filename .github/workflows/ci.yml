@@ -29,3 +29,69 @@ jobs:
       # A broken build is as bad as a failing test: the server serves the
       # frontend from server/public, which only exists after this.
       - run: npm run build
+
+  # The installer is PowerShell, which nothing above parses. This job runs the
+  # engine that matters: Windows PowerShell 5.1, which ships with Windows and
+  # reads a BOM-less file as the system ANSI codepage. A UTF-8 character in
+  # these scripts becomes a stray quote there and breaks the parse - invisible
+  # on Linux, fatal on the office PC.
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Parse the scripts with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem -Path scripts -Filter *.ps1 | ForEach-Object {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors -and $errors.Count) {
+              $failed = $true
+              Write-Host "FAIL $($_.Name)"
+              $errors | ForEach-Object { Write-Host ("  line {0}: {1}" -f $_.Extent.StartLineNumber, $_.Message) }
+            } else {
+              Write-Host "ok   $($_.Name)"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      # Everything the office PC does on first run except registering the
+      # service: check Node, install, build, write config.json with a
+      # generated admin token.
+      - name: Run the installer for real
+        shell: powershell
+        run: ./scripts/install.ps1 -NoService
+
+      - name: Check it produced something that starts
+        shell: powershell
+        run: |
+          if (-not (Test-Path 'config.json'))              { throw 'installer did not write config.json' }
+          if (-not (Test-Path 'server/dist/index.js'))     { throw 'installer did not build the server' }
+          if (-not (Test-Path 'server/public/index.html')) { throw 'installer did not build the frontend' }
+
+          $config = Get-Content config.json -Raw | ConvertFrom-Json
+          if ([string]::IsNullOrWhiteSpace($config.adminToken)) { throw 'no admin token was generated' }
+          if ($config.adminToken -eq 'change-me')               { throw 'admin token was left at the default' }
+
+          $server = Start-Process node -ArgumentList 'server/dist/index.js' -PassThru -NoNewWindow
+          try {
+            $up = $false
+            foreach ($attempt in 1..30) {
+              Start-Sleep -Seconds 1
+              try {
+                $response = Invoke-WebRequest -Uri "http://127.0.0.1:$($config.port)/api/health" -UseBasicParsing -TimeoutSec 2
+                if ($response.StatusCode -eq 200) { $up = $true; break }
+              } catch { }
+            }
+            if (-not $up) { throw 'the server the installer built never answered' }
+            Write-Host 'server answered on Windows'
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }

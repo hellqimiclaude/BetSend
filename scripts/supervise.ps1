@@ -8,7 +8,7 @@
   code, with a backoff so a crash loop cannot spin the CPU, and appends both
   output streams to a rotating log.
 
-  It is not meant to be run by hand — use "Install BetSend.bat".
+  It is not meant to be run by hand -- use "Install BetSend.bat".
 #>
 [CmdletBinding()]
 param(
@@ -40,7 +40,7 @@ function Invoke-LogRotation {
 }
 
 if (-not (Test-Path $entry)) {
-  Write-Log "server\dist\index.js is missing — run 'npm run build' or re-run the installer. Giving up."
+  Write-Log "server\dist\index.js is missing -- run 'npm run build' or re-run the installer. Giving up."
   exit 1
 }
 
