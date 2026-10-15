@@ -84,13 +84,35 @@ The server keeps its state in a single SQLite file — there is no database to i
 
 ## Quick start
 
-### Windows
+### Windows — one file
+
+Download **[`BetSend-Setup.bat`](https://raw.githubusercontent.com/hellqimiclaude/BetSend/claude/lan-file-transfer-app-b5b9xn/BetSend-Setup.bat)**
+(right-click → *Save link as…*) and double-click it.
+
+That is the whole thing. It asks Windows for administrator rights, installs Node.js
+with winget if it is missing, downloads the current code to `C:\BetSend`, and runs the
+installer. Nothing to clone, nothing to unzip, no README to follow.
+
+> Windows will say the file came from the internet. **More info → Run anyway.** That
+> warning appears for every unsigned script; if you would rather not trust it, use the
+> manual route below, which does the same steps by hand.
+
+Running it again later upgrades in place: your `config.json`, the files people have
+sent and the logs are all left alone.
+
+The app folder is small — to keep people's files on a roomier drive:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\BetSend\scripts\install.ps1 -StorageDir D:\BetSendData
+```
+
+### Windows — manually
 
 1. Install **Node.js LTS** from <https://nodejs.org> (next, next, finish).
 2. Put the BetSend folder somewhere permanent — `C:\BetSend` is fine.
 3. Double-click **`Install BetSend.bat`** and approve the administrator prompt.
 
-That is the whole setup. The installer builds the app, generates an admin token, opens
+Either way, the installer builds the app, generates an admin token, opens
 the firewall for private and domain networks only, registers BetSend to start with
 Windows, starts it, and then prints what you need:
 

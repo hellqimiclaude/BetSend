@@ -1,0 +1,7 @@
+# Windows shells need CRLF; checking these out with LF breaks label handling
+# in cmd.exe and can confuse PowerShell's here-strings.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Everything else stays LF, including the shell scripts.
+*.sh  text eol=lf
