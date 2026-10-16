@@ -44,6 +44,17 @@ if (-not (Test-Path $entry)) {
   exit 1
 }
 
+# The server finds config.json by walking up from its working directory. A
+# scheduled task's working directory is not something to rely on -- if it is
+# ever C:\Windows\System32 instead of the install folder, the server silently
+# falls back to defaults and opens a different, empty database, on a different
+# port, with the default admin token. Name the file outright and the question
+# cannot arise.
+Set-Location -LiteralPath $AppRoot
+$configFile = Join-Path $AppRoot 'config.json'
+if (Test-Path $configFile) { $env:CONFIG_FILE = $configFile }
+
+Write-Log "app root: $AppRoot"
 Write-Log 'starting'
 
 # Back off further each time it dies quickly, so a misconfiguration (a taken
