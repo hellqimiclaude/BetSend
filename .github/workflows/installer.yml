@@ -6,6 +6,13 @@ on:
     # Pushing a v-tag is how a downloadable release gets cut.
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      release_tag:
+        # Tag pushes are not always possible from where this gets driven, so a
+        # release can also be cut by dispatching this workflow with a tag name.
+        description: 'Publish a release under this tag (e.g. v1.1.0). Leave empty to only build.'
+        required: false
+        default: ''
   release:
     types: [published]
 
@@ -113,15 +120,22 @@ jobs:
       # with access to this repository, which is no use for handing the
       # installer to a colleague. A release asset is a plain public download.
       - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
+        if: >-
+          inputs.release_tag != ''
+          || startsWith(github.ref, 'refs/tags/v')
+          || github.event_name == 'release'
         shell: bash
         run: |
           set -euo pipefail
           tag="${{ github.event.release.tag_name }}"
+          [ -n "$tag" ] || tag="${{ inputs.release_tag }}"
           [ -n "$tag" ] || tag="$GITHUB_REF_NAME"
 
           if ! gh release view "$tag" >/dev/null 2>&1; then
+            # --target so the tag is created on the commit that was built,
+            # rather than wherever the default branch happens to be.
             gh release create "$tag" --title "BetSend $tag" \
+                              --target "$GITHUB_SHA" \
                               --notes-file installer/RELEASE_NOTES.md
           fi
 
