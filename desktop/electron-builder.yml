@@ -33,6 +33,12 @@ win:
   # until a certificate is set up; see the README.
 
 nsis:
+  # Named explicitly. The default is "${productName} Setup ${version}.exe",
+  # which lands next to the server's "BetSend-Setup-1.1.3.exe" differing only
+  # in punctuation -- two installers in one release that nobody could tell
+  # apart at a glance, for a machine where running the wrong one matters.
+  artifactName: BetSend-Desktop-Setup-${version}.${ext}
+
   # Per-user by default, so a colleague without local administrator rights can
   # still install it. An IT deployment can pass /ALLUSERS to override.
   perMachine: false

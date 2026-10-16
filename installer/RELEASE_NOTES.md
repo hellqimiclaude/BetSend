@@ -2,7 +2,8 @@ Two separate downloads:
 
 - **`BetSend-Setup-*.exe`** — the **server**. Install this on *one* office PC, the
   machine everybody will send files through. You only do this once.
-- **`BetSend-Desktop-*.exe`** — the **desktop app**, for everybody else. Optional:
+- **`BetSend-Desktop-Setup-*.exe`** — the **desktop app**, for everybody else. It is
+  the larger of the two, around 80 MB, because it carries its own browser engine. Optional:
   colleagues can just open the server's address in a browser instead.
 
 ### Windows will warn you, and that is expected
@@ -18,7 +19,7 @@ one built here, check its SHA-256 against the list at the bottom of these
 notes:
 
 ```
-Get-FileHash .\BetSend-Desktop-Setup-1.1.2.exe -Algorithm SHA256
+Get-FileHash .\BetSend-Desktop-Setup-*.exe -Algorithm SHA256
 ```
 
 **A way to avoid the warning entirely:** put the desktop installer on a shared
