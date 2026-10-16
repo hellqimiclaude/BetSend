@@ -20,7 +20,7 @@ export default async function coreRoutes(app: FastifyInstance): Promise<void> {
     if (user) touchLastSeen(user.id);
 
     return {
-      app: { name: 'BetSend', version: '1.1.1' },
+      app: { name: 'BetSend', version: '1.1.2' },
       registrationMode: settings.registrationMode,
       // The sign-in screen needs these to decide whether to offer "create an
       // account" and "forgot password" at all.
