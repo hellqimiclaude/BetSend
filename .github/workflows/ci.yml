@@ -115,6 +115,7 @@ jobs:
             try {
               $verify = Invoke-WebRequest -Uri "http://127.0.0.1:$($config.port)/api/admin/verify" `
                           -Method POST -UseBasicParsing -TimeoutSec 5 `
+                          -ContentType 'application/json' -Body '{}' `
                           -Headers @{ 'X-Admin-Token' = $config.adminToken }
               if ($verify.StatusCode -ne 200) { throw "status $($verify.StatusCode)" }
             } catch {

@@ -110,11 +110,31 @@ export async function buildApp(): Promise<FastifyInstance> {
       reply.code(error.statusCode).send({ error: { code: error.code, message: error.message } });
       return;
     }
-    const failure = error as { statusCode?: number; message?: string };
+    const failure = error as { statusCode?: number; code?: string; message?: string };
     if (failure.statusCode === 400 && String(failure.message ?? '').includes('JSON')) {
       reply.code(400).send({ error: { code: 'bad_json', message: 'That request was malformed.' } });
       return;
     }
+
+    /**
+     * Fastify's own errors already carry the right status: a content type
+     * nothing can parse is 415, a body over the limit is 413. Sweeping those
+     * into the 500 below told the caller "something went wrong on the server"
+     * when the request was at fault, and logged it next to real server faults
+     * — which is how a plain 415 came to look like a crash.
+     *
+     * Only 4xx passes through. A 5xx from a library is still ours to own, and
+     * its message is not for the caller.
+     */
+    if (typeof failure.statusCode === 'number' && failure.statusCode >= 400 && failure.statusCode < 500) {
+      const code = failure.code ? failure.code.toLowerCase().replace(/^fst_err_/, '') : 'bad_request';
+      request.log.info({ err: error }, 'rejected request');
+      reply.code(failure.statusCode).send({
+        error: { code, message: failure.message ?? 'That request could not be handled.' },
+      });
+      return;
+    }
+
     request.log.error({ err: error }, 'unhandled error');
     reply.code(500).send({
       error: { code: 'server_error', message: 'Something went wrong on the server. Please try again.' },
