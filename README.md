@@ -764,11 +764,15 @@ than guessed:
 
 | | Hex | Where it was taken from |
 |---|---|---|
-| Brand green | `#058c35` | the Sign In button |
-| Accent red | `#f50628` | the NEW badge and carousel bar |
+| Brand red | `#f50628` | the NEW badge and carousel bar |
+| Accent green | `#058c35` | the Sign In button |
 | Page background | `#101118` | the body |
 | Raised surface | `#18171f` | the header and nav bar |
 | Sunken surface | `#202128` | input fields |
+
+Note the two are the other way round from the site itself: there green is the
+button and red the accent, while BetSend leads with red and keeps green for
+confirmation, healthy states and the unread count.
 
 They live in `web/tailwind.config.js`. Note that Tailwind's `slate` palette is
 **replaced** there rather than added to: every surface in this app already
@@ -792,7 +796,7 @@ That rewrites `web/src/fonts.css` and the files under `web/public/fonts/`.
 Both are committed, so an ordinary build needs no network. All three families
 are under the SIL Open Font License; see `web/public/fonts/OFL.txt`.
 
-The logo is still a placeholder — a plain upload glyph in the brand green.
+The logo is still a placeholder — a plain upload glyph in the brand red.
 
 ## Desktop app (Windows)
 

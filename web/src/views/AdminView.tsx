@@ -270,7 +270,10 @@ function StatsGrid({ overview }: { overview: AdminOverview }) {
       </dl>
       <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
         <div
-          className={classNames('h-full rounded-full', usedFraction > 0.9 ? 'bg-red-500' : 'bg-brand-600')}
+          // Green while there is room, brand red when there is not. It used to
+          // be brand-then-red, which stopped meaning anything once the brand
+          // itself became red.
+          className={classNames('h-full rounded-full', usedFraction > 0.9 ? 'bg-brand-500' : 'bg-accent-600')}
           style={{ width: `${Math.min(100, usedFraction * 100)}%` }}
         />
       </div>

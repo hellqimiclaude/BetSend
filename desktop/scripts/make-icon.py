@@ -3,7 +3,7 @@ the same upload arrow the web app uses in its header."""
 import struct, zlib, math
 
 S = 256
-BG = (5, 140, 53)           # BetLive green, sampled from their Sign In button
+BG = (214, 4, 33)           # BetLive red, the app's primary colour
 FG = (255, 255, 255)
 RADIUS = 56
 

@@ -9,10 +9,32 @@
  */
 
 /**
- * Deep green, BetLive's primary action colour. 600 is the sampled value and
- * is what buttons use; the rest of the ramp is built around it.
+ * BetLive's vivid red, and the app's primary action colour.
+ *
+ * On betlive.com the red is the accent and the green is the button, but
+ * BetSend takes them the other way round -- red leads, green supports.
+ * 500 is the sampled value; the ramp is built around it, with 600 as the
+ * resting state for filled buttons so hover has somewhere brighter to go.
  */
 const brand = {
+  50: '#ffe9ed',
+  100: '#ffccd5',
+  200: '#ff99a9',
+  300: '#fb5f78',
+  400: '#f82a4d',
+  500: '#f50628', // sampled: the NEW badge and carousel bar
+  600: '#d60421',
+  700: '#b0031b',
+  800: '#870316',
+  900: '#630311',
+  950: '#3a0109',
+};
+
+/**
+ * BetLive's deep green, here the supporting colour: confirmation, healthy
+ * states, and the unread count. Kept rare so it still registers.
+ */
+const accent = {
   50: '#e9f7ee',
   100: '#c8ebd4',
   200: '#93dcae',
@@ -24,25 +46,6 @@ const brand = {
   800: '#055d25',
   900: '#064c20',
   950: '#02230f',
-};
-
-/**
- * The vivid red BetLive uses for NEW badges and the carousel bar. Reserved
- * for things that genuinely want the eye -- unread counts, destructive
- * confirmations -- so it keeps meaning something.
- */
-const accent = {
-  50: '#ffe9ed',
-  100: '#ffccd5',
-  200: '#ff99a9',
-  300: '#fb5f78',
-  400: '#f82a4d',
-  500: '#f50628', // sampled: the NEW badge
-  600: '#d60421',
-  700: '#b0031b',
-  800: '#870316',
-  900: '#630311',
-  950: '#3a0109',
 };
 
 /**
