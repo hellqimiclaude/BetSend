@@ -1,3 +1,6 @@
+/* Self-hosted so this works with no internet and the CSP can stay at 'self'. */
+@import './fonts.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -5,6 +8,14 @@
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
+  }
+
+  /* Headings carry BetLive's display face; body text stays on Inter, which
+     holds up better at the sizes most of this app is read at. */
+  h1,
+  h2,
+  h3 {
+    @apply font-display tracking-tight;
   }
 
   body {

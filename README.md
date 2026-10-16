@@ -757,6 +757,43 @@ transfers are unaffected.
 That means the WebSocket dropped; the sidebar shows "Reconnecting to the server…" while it
 retries. A page refresh forces it.
 
+## House style
+
+The colours come from betlive.com, sampled off a screenshot of the site rather
+than guessed:
+
+| | Hex | Where it was taken from |
+|---|---|---|
+| Brand green | `#058c35` | the Sign In button |
+| Accent red | `#f50628` | the NEW badge and carousel bar |
+| Page background | `#101118` | the body |
+| Raised surface | `#18171f` | the header and nav bar |
+| Sunken surface | `#202128` | input fields |
+
+They live in `web/tailwind.config.js`. Note that Tailwind's `slate` palette is
+**replaced** there rather than added to: every surface in this app already
+reached for slate, so redefining it re-skins the lot in one place instead of
+renaming a colour in two hundred.
+
+Type is Montserrat for headings — the closest widely available match to the
+betlive logotype — and Inter for everything else. Noto Sans Georgian is in the
+stack because neither covers the Georgian alphabet and the people using this
+work in Tbilisi.
+
+The fonts are **self-hosted**, not linked from Google, because the office LAN
+may have no route to the internet and the app's Content-Security-Policy allows
+`'self'` only. To change weights or subsets:
+
+```
+npm run fonts -w web
+```
+
+That rewrites `web/src/fonts.css` and the files under `web/public/fonts/`.
+Both are committed, so an ordinary build needs no network. All three families
+are under the SIL Open Font License; see `web/public/fonts/OFL.txt`.
+
+The logo is still a placeholder — a plain upload glyph in the brand green.
+
 ## Desktop app (Windows)
 
 A BetSend window with its own icon, instead of a browser tab. It talks to the

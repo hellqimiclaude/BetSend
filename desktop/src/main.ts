@@ -103,7 +103,9 @@ function openMainWindow(serverUrl: string): void {
     minHeight: 480,
     show: false,
     title: 'BetSend',
-    backgroundColor: '#f8fafc',
+    // BetLive's page background, so there is no white flash before the
+    // app paints its own dark theme.
+    backgroundColor: '#101118',
     autoHideMenuBar: true,
     webPreferences: {
       // The window shows a remote page, so it gets no privileges at all.
@@ -165,7 +167,7 @@ function openSetupWindow(): void {
     height: 460,
     resizable: false,
     title: 'BetSend',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#101118',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(here, 'preload.cjs'),
@@ -238,11 +240,11 @@ function unreachableHtml(serverUrl: string, reason: string, url: string): string
 <html lang="en"><head><meta charset="utf-8"><title>BetSend</title>
 <style>
   :root { color-scheme: light dark; }
-  body { font: 15px/1.6 system-ui, sans-serif; margin: 0; display: grid; place-items: center;
-         min-height: 100vh; background: #f8fafc; color: #0f172a; padding: 24px; }
-  @media (prefers-color-scheme: dark) { body { background: #020617; color: #e2e8f0; } }
+  body { font: 15px/1.6 Inter, "Segoe UI", system-ui, sans-serif; margin: 0; display: grid;
+         place-items: center; min-height: 100vh; background: #f7f7f9; color: #101118; padding: 24px; }
+  @media (prefers-color-scheme: dark) { body { background: #101118; color: #eeeef2; } }
   .card { max-width: 30rem; }
-  h1 { font-size: 1.25rem; margin: 0 0 .5rem; }
+  h1 { font: 700 1.25rem/1.3 Montserrat, "Segoe UI", system-ui, sans-serif; margin: 0 0 .5rem; }
   p { margin: .5rem 0; }
   code { font-size: .9em; opacity: .8; word-break: break-all; }
   ul { padding-left: 1.2rem; }

@@ -54,7 +54,7 @@ export function Sidebar({ view, onNavigate }: { view: View; onNavigate: (view: V
               <Icon className="h-[18px] w-[18px]" />
               <span>{item.label}</span>
               {item.view === 'inbox' && unread > 0 ? (
-                <span className="ml-auto grid min-w-[20px] place-items-center rounded-full bg-brand-600 px-1.5 py-0.5 text-xs font-semibold text-white">
+                <span className="ml-auto grid min-w-[20px] place-items-center rounded-full bg-accent-500 px-1.5 py-0.5 text-xs font-semibold text-white">
                   {unread > 99 ? '99+' : unread}
                 </span>
               ) : null}

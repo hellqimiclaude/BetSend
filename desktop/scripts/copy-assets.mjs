@@ -17,6 +17,23 @@ for (const asset of assets) {
   console.log(`copied src/${asset} -> dist/${asset}`);
 }
 
+/*
+ * The setup window is a local page shown before the server address is even
+ * known, so it cannot use the web app's self-hosted fonts. Carry the three
+ * faces it needs -- Latin only; this window is chrome, not content.
+ */
+const fontSource = path.resolve(root, '..', 'web', 'public', 'fonts');
+const fonts = ['inter-400-latin.woff2', 'inter-600-latin.woff2', 'montserrat-700-latin.woff2'];
+fs.mkdirSync(path.join(root, 'dist', 'fonts'), { recursive: true });
+for (const font of fonts) {
+  const from = path.join(fontSource, font);
+  if (!fs.existsSync(from)) {
+    throw new Error(`${font} is missing from web/public/fonts — run \`npm run fonts -w web\``);
+  }
+  fs.copyFileSync(from, path.join(root, 'dist', 'fonts', font));
+}
+console.log(`copied ${fonts.length} font files -> dist/fonts/`);
+
 const icon = path.join(root, 'build', 'icon.png');
 if (fs.existsSync(icon)) {
   fs.copyFileSync(icon, path.join(root, 'dist', 'icon.png'));
