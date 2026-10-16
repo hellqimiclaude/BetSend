@@ -100,7 +100,20 @@ jobs:
                         -Headers @{ 'X-Admin-Token' = $config.adminToken }
             if ($verify.StatusCode -ne 200) { throw "status $($verify.StatusCode)" }
           } catch {
-            throw "the running server refused the installed admin token, so it is not reading config.json: $($_.Exception.Message)"
+            # Print what the server actually said and what it logged. A 403
+            # means the wrong configuration; anything else is its own bug.
+            $detail = $_.Exception.Message
+            $failure = $_.Exception.Response
+            if ($failure) {
+              try {
+                $reader = New-Object System.IO.StreamReader($failure.GetResponseStream())
+                $detail = "$detail -- body: $($reader.ReadToEnd())"
+              } catch { }
+            }
+            Write-Host '--- server log ---'
+            Get-Content (Join-Path $app 'logs\betsend.log') -Tail 80 -ErrorAction SilentlyContinue
+            Write-Host '--- end server log ---'
+            throw "/api/admin/verify did not accept the installed admin token: $detail"
           }
           Write-Host 'the running server is reading the installed config.json'
 
