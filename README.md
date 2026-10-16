@@ -787,6 +787,26 @@ npm run package -w desktop                 # scripts, Electron needs its runtime
 The installer lands in `dist-desktop/`. CI builds it on every push and attaches
 it to each release.
 
-Like the server installer it is **not code-signed**, so Windows warns about an
-unknown publisher. A certificate would remove that; deploying through Intune or
-group policy mostly sidesteps it.
+### The unsigned-publisher warning
+
+Neither installer is code-signed, so every person who runs one sees:
+
+> **Windows protected your PC** — Microsoft Defender SmartScreen prevented an
+> unrecognised app from starting.
+
+They click **More info**, then **Run anyway**. This is a deliberate choice: a
+certificate that actually removes the warning straight away is an EV one, at
+roughly $400–700 a year.
+
+Two things make it easier to live with:
+
+- **Publish the checksums.** Every release lists the SHA-256 of each installer,
+  so anyone can confirm the file is the one CI built:
+  `Get-FileHash .\BetSend-Desktop-Setup-1.1.2.exe -Algorithm SHA256`
+- **Hand it out over the network, not the internet.** Put the installer on a
+  shared folder or an intranet page. Windows marks files that arrive from the
+  internet, and that mark is most of what SmartScreen reacts to; a file copied
+  from a share usually installs without a word.
+
+And the browser always works with no warning at all, so anybody who would
+rather not click through it does not have to.

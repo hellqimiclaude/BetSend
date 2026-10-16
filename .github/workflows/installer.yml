@@ -199,12 +199,29 @@ jobs:
           [ -n "$tag" ] || tag="${{ inputs.release_tag }}"
           [ -n "$tag" ] || tag="$GITHUB_REF_NAME"
 
+          # Nothing is code-signed, so the checksums are the only way somebody
+          # can tell the file they downloaded is the one this build produced.
+          # Published with the release rather than alongside it, so there is
+          # one less thing to go missing.
+          notes=release-notes.md
+          cp installer/RELEASE_NOTES.md "$notes"
+          {
+            echo
+            echo '### Checksums (SHA-256)'
+            echo
+            for exe in dist-installer/*.exe dist-desktop/*.exe; do
+              printf '`%s`  \n`%s`\n\n' "$(basename "$exe")" "$(sha256sum "$exe" | cut -d' ' -f1)"
+            done
+          } >> "$notes"
+
           if ! gh release view "$tag" >/dev/null 2>&1; then
             # --target so the tag is created on the commit that was built,
             # rather than wherever the default branch happens to be.
             gh release create "$tag" --title "BetSend $tag" \
                               --target "$GITHUB_SHA" \
-                              --notes-file installer/RELEASE_NOTES.md
+                              --notes-file "$notes"
+          else
+            gh release edit "$tag" --notes-file "$notes"
           fi
 
           gh release upload "$tag" dist-installer/*.exe dist-desktop/*.exe --clobber
