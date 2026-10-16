@@ -145,6 +145,45 @@ jobs:
           path: dist-installer/*.exe
           if-no-files-found: error
 
+      # --- the desktop client ------------------------------------------------
+      # A separate installer. The server above is what runs in the office; this
+      # is what a colleague puts on their own machine instead of using a
+      # browser tab.
+      - name: Build the desktop app
+        shell: powershell
+        run: |
+          # The repo .npmrc blocks install scripts, which is what stops npm
+          # compiling better-sqlite3 -- but it also stops Electron fetching its
+          # own runtime. Ask for that one explicitly rather than lifting the
+          # rule for everything.
+          npm rebuild electron --no-ignore-scripts
+          if ($LASTEXITCODE -ne 0) { throw 'could not fetch the Electron runtime' }
+
+          npm run build -w desktop
+          if ($LASTEXITCODE -ne 0) { throw 'the desktop build failed' }
+
+          npm run package -w desktop
+          if ($LASTEXITCODE -ne 0) { throw 'electron-builder failed' }
+
+          Get-ChildItem dist-desktop -Filter *.exe | ForEach-Object {
+            Write-Host ("  {0} ({1:n1} MB)" -f $_.Name, ($_.Length / 1MB))
+          }
+
+      - name: Check the desktop installer exists
+        shell: powershell
+        run: |
+          $setup = Get-ChildItem dist-desktop -Filter '*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $setup) { throw 'electron-builder produced no installer' }
+          # Under 20 MB would mean the Electron runtime did not make it in.
+          if ($setup.Length -lt 20MB) { throw "the desktop installer is only $([math]::Round($setup.Length/1MB,1)) MB - the runtime is missing" }
+          Write-Host "desktop installer: $($setup.Name)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BetSend-Desktop
+          path: dist-desktop/*.exe
+          if-no-files-found: error
+
       # The artifact above can only be fetched by somebody signed in to GitHub
       # with access to this repository, which is no use for handing the
       # installer to a colleague. A release asset is a plain public download.
@@ -168,7 +207,7 @@ jobs:
                               --notes-file installer/RELEASE_NOTES.md
           fi
 
-          gh release upload "$tag" dist-installer/*.exe --clobber
-          echo "Installer attached to $tag"
+          gh release upload "$tag" dist-installer/*.exe dist-desktop/*.exe --clobber
+          echo "Server installer and desktop app attached to $tag"
         env:
           GH_TOKEN: ${{ github.token }}

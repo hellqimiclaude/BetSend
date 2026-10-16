@@ -1,0 +1,46 @@
+appId: com.betlive.betsend
+productName: BetSend
+copyright: BetLive
+
+directories:
+  output: ../dist-desktop
+  buildResources: build
+
+# Only the compiled app. There are no runtime dependencies -- the window shows
+# a page served by the BetSend server, so everything else is a dev tool.
+files:
+  - dist/**/*
+  - package.json
+
+# There is no native module to rebuild, and in an npm workspace this step
+# reaches the repository root and prunes every dev dependency it finds there,
+# leaving the checkout unable to typecheck or test. Nothing to gain, a broken
+# tree to lose.
+npmRebuild: false
+
+# Only Windows is shipped, but the Linux target is what the build gets
+# verified on, so give it a sane executable name too -- the default is derived
+# from the scoped package name and comes out as "@betsenddesktop".
+linux:
+  executableName: betsend
+  target: dir
+  category: Network
+
+win:
+  target: nsis
+  icon: build/icon.png
+  # No code signing configured. Windows will warn about an unknown publisher
+  # until a certificate is set up; see the README.
+
+nsis:
+  # Per-user by default, so a colleague without local administrator rights can
+  # still install it. An IT deployment can pass /ALLUSERS to override.
+  perMachine: false
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: BetSend
+  # Leaving the settings file behind means a reinstall does not ask for the
+  # server address again.
+  deleteAppDataOnUninstall: false

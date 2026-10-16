@@ -756,3 +756,37 @@ transfers are unaffected.
 **The badge or the online dots look stale.**
 That means the WebSocket dropped; the sidebar shows "Reconnecting to the server…" while it
 retries. A page refresh forces it.
+
+## Desktop app (Windows)
+
+A BetSend window with its own icon, instead of a browser tab. It talks to the
+same server — it is a second way in, not a replacement, and the web interface
+keeps working for anyone who prefers it.
+
+Download `BetSend-Desktop-Setup-*.exe` from the
+[releases page](https://github.com/hellqimiclaude/BetSend/releases/latest) and
+run it. It installs per-user, so local administrator rights are not needed.
+
+On first run it asks for the server address — the computer name or IP of the PC
+running BetSend, for example `betsend-pc` or `192.168.1.5:8080`. It remembers
+it, and checks the address answers before saving, so a typo is caught there
+rather than becoming a blank window. To point it somewhere else later, use
+**Change server address** on the tray icon.
+
+Closing the window leaves it in the tray so transfers can finish; **Quit
+BetSend** on the tray menu exits properly. It starts with Windows by default,
+which the tray menu can turn off.
+
+### Building it
+
+```
+npm rebuild electron --no-ignore-scripts   # the repo .npmrc blocks install
+npm run package -w desktop                 # scripts, Electron needs its runtime
+```
+
+The installer lands in `dist-desktop/`. CI builds it on every push and attaches
+it to each release.
+
+Like the server installer it is **not code-signed**, so Windows warns about an
+unknown publisher. A certificate would remove that; deploying through Intune or
+group policy mostly sidesteps it.
