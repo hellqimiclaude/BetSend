@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { config } from '../config.js';
 import { getSettings } from '../services/settings.js';
 import { NAME_EXAMPLE, NAME_PATTERN_SOURCE } from '../util/names.js';
-import { listUsers, touchLastSeen } from '../repos/users.js';
+import { countUsers, listUsers, touchLastSeen } from '../repos/users.js';
 import { unreadCount } from '../repos/transfers.js';
 import { toUserView } from '../views.js';
 import { currentUser, optionalUser } from './auth.js';
@@ -26,6 +26,10 @@ export default async function coreRoutes(app: FastifyInstance): Promise<void> {
       // account" and "forgot password" at all.
       emailDomains: config.emailDomains,
       mailConfigured: mailConfigured(),
+      // An empty directory means nobody can get in: registering needs a mail
+      // relay to verify the address, and the Admin page needs a session. The
+      // sign-in screen offers first-run setup instead.
+      needsFirstRun: countUsers() === 0,
       namePattern: NAME_PATTERN_SOURCE,
       nameExample: NAME_EXAMPLE,
       minPasswordLength: MIN_PASSWORD_LENGTH,

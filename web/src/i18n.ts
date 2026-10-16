@@ -41,6 +41,18 @@ const en = {
   'request.sentBody': 'If {email} can use BetSend, a link is on its way to it now.',
   'request.sentHint': 'The link works once and expires in 72 hours. It can take a minute to arrive.',
 
+  'firstRun.title': 'Set up BetSend',
+  'firstRun.intro':
+    'Nobody has an account on this server yet. Create the first one — it will be the administrator, ' +
+    'and can then add everybody else.',
+  'firstRun.token': 'Admin token',
+  'firstRun.tokenHint':
+    'The installer showed this on its last page. It is also "adminToken" in config.json, in the folder BetSend was installed to.',
+  'firstRun.email': 'Your work email',
+  'firstRun.password': 'Choose a password',
+  'firstRun.confirm': 'Type it again',
+  'firstRun.submit': 'Create the account',
+
   'setup.title': 'Choose a password',
   'setup.subtitle': 'Setting up {name}.',
   'setup.forEmail': 'for {email}',

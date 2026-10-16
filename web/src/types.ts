@@ -65,6 +65,8 @@ export interface Bootstrap {
   emailDomains: string[];
   /** Without a mail relay there is no registration and no password reset. */
   mailConfigured: boolean;
+  /** Nobody has an account yet, so the first-run screen is shown instead. */
+  needsFirstRun: boolean;
   publicMode: boolean;
   minPasswordLength: number;
   namePattern: string;

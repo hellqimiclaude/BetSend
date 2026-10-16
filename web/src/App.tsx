@@ -4,6 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { Toasts } from './components/Toasts';
 import { SignIn, RequestLink } from './views/SignIn';
 import { SetPassword } from './views/SetPassword';
+import { FirstRun } from './views/FirstRun';
 import { SendView } from './views/SendView';
 import { InboxView } from './views/InboxView';
 import { SentView } from './views/SentView';
@@ -40,7 +41,7 @@ function authFromHash(): AuthRoute {
 }
 
 export function App() {
-  const { ready, bootError, user, retryBoot } = useApp();
+  const { ready, bootError, user, bootstrap, retryBoot } = useApp();
   const [view, setView] = useState<View>(() => viewFromHash());
   const [auth, setAuth] = useState<AuthRoute>(() => authFromHash());
 
@@ -90,6 +91,11 @@ export function App() {
   }
 
   if (!user) {
+    // Nothing else is reachable on an empty server: registering needs a mail
+    // relay, and the Admin page needs a session.
+    if (bootstrap?.needsFirstRun) {
+      return <FirstRun />;
+    }
     // A link from an email points at #/setup?token=… — honour it first.
     if (auth.screen === 'setup') {
       return <SetPassword token={auth.token} onBack={() => goAuth('signin')} />;

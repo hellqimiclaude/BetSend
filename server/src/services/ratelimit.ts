@@ -74,6 +74,11 @@ export function hit(key: string, options: LimitOptions): LimitResult {
 }
 
 /** Called after a successful login so one bad typo does not count against you. */
+/** Forget every limiter. Tests only — they share one process. */
+export function clearAll(): void {
+  buckets.clear();
+}
+
 export function clear(key: string): void {
   buckets.delete(key);
 }

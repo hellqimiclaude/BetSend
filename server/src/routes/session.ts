@@ -2,8 +2,16 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { config } from '../config.js';
 import { getSettings } from '../services/settings.js';
 import { badRequest, forbidden, unauthorized } from '../util/errors.js';
-import { isAllowedDomain, validateEmail } from '../util/email.js';
-import { createUser, findByEmail, markEmailVerified, setPassword, touchLastSeen } from '../repos/users.js';
+import { displayNameFromEmail, isAllowedDomain, validateEmail } from '../util/email.js';
+import {
+  countUsers,
+  createUser,
+  findByEmail,
+  markEmailVerified,
+  setAdmin,
+  setPassword,
+  touchLastSeen,
+} from '../repos/users.js';
 import { logEvent, unreadCount } from '../repos/transfers.js';
 import {
   burnTime,
@@ -25,7 +33,7 @@ import {
 } from '../services/sessions.js';
 import { mailConfigured, resetPasswordMessage, send, verifyAddressMessage } from '../services/mail.js';
 import { clientIp, currentUser, optionalUser, sessionToken } from './auth.js';
-import { clear, hit, LOGIN_LIMIT, SETUP_LIMIT } from '../services/ratelimit.js';
+import { ADMIN_LIMIT, clear, hit, LOGIN_LIMIT, SETUP_LIMIT } from '../services/ratelimit.js';
 import { toUserView } from '../views.js';
 
 function setSessionCookie(reply: FastifyReply, token: string): void {
@@ -165,6 +173,71 @@ export default async function sessionRoutes(app: FastifyInstance): Promise<void>
 
     // Identical response whether or not that address exists.
     return { ok: true };
+  });
+
+  /**
+   * First-run setup: make the very first account.
+   *
+   * Without this a new install is a locked door. Registering needs a mail
+   * relay to verify the address, and the relay cannot be configured without
+   * reaching the Admin page, which needs an account. The admin token the
+   * installer prints is the way through: whoever has it installed the server.
+   *
+   * Only works while the directory is empty, so it cannot become a back door
+   * later, and the token is rate limited exactly as the Admin page is.
+   */
+  app.post('/api/first-run', async (request, reply) => {
+    if (countUsers() > 0) {
+      throw forbidden('BetSend is already set up. Please sign in.', 'already_set_up');
+    }
+
+    const body = (request.body ?? {}) as { adminToken?: unknown; email?: unknown; password?: unknown };
+    const provided = typeof body.adminToken === 'string' ? body.adminToken.trim() : '';
+    const password = typeof body.password === 'string' ? body.password : '';
+
+    const limit = hit(`first-run:${clientIp(request)}`, ADMIN_LIMIT);
+    if (!limit.allowed) {
+      throw forbidden(
+        `Too many attempts. Please wait ${Math.ceil(limit.retryAfter / 60)} minutes and try again.`,
+        'rate_limited',
+      );
+    }
+
+    if (!config.adminToken || provided !== config.adminToken) {
+      throw forbidden('That admin token is not correct.', 'bad_admin_token');
+    }
+
+    // The token was right, so forget the attempt. What follows is somebody
+    // mistyping their own address or picking a password the rules reject,
+    // which is not an attack -- and on the only screen into a new server,
+    // locking them out for half an hour over it would be absurd.
+    clear(`first-run:${clientIp(request)}`);
+
+    const check = validateEmail(typeof body.email === 'string' ? body.email : '');
+    if (!check.ok) throw badRequest(check.error!, 'invalid_email');
+    if (!isAllowedDomain(check.value, config.emailDomains)) {
+      throw forbidden(
+        `BetSend is only for ${config.emailDomains.map((d) => '@' + d).join(' or ')} addresses.`,
+        'domain_not_allowed',
+      );
+    }
+
+    // Check the password before creating anything. A rejected account would
+    // still be an account, and countUsers() above would then refuse every
+    // retry -- locking the only door into a brand new server.
+    const strength = checkPasswordStrength(password, [displayNameFromEmail(check.value), check.value]);
+    if (!strength.ok) throw badRequest(strength.error!, 'weak_password');
+
+    const user = createUser({ email: check.value, source: 'admin' });
+    setPassword(user.id, await hashPassword(password));
+    markEmailVerified(user.id);
+    setAdmin(user.id, true);
+
+    setSessionCookie(reply, createSession(user.id, request.headers['user-agent'] ?? null));
+    logEvent('session.first_run', null, user.id);
+
+    const fresh = findByEmail(check.value)!;
+    return { user: toUserView(fresh), unread: 0 };
   });
 
   /** Check a setup or reset link before showing the form. */

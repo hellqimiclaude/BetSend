@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +17,33 @@ import adminRoutes from './routes/admin.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 /** Built frontend. `npm run build` puts Vite's output here. */
 export const PUBLIC_DIR = path.resolve(here, '..', 'public');
+
+/**
+ * Hashes of the inline scripts in the built index.html.
+ *
+ * index.html carries one inline script: it reads the saved theme and sets the
+ * dark class before first paint, so the page never flashes white on its way to
+ * dark. A `script-src 'self'` policy blocks it, which is what was happening --
+ * the policy was written allowing 'unsafe-inline' for styles but not scripts,
+ * so the flash it exists to prevent happened on every load, visible only in the
+ * browser console.
+ *
+ * Hashing the script rather than allowing 'unsafe-inline' keeps the policy
+ * strict, and computing it from the file rather than pasting a constant means
+ * it cannot drift when the script changes.
+ */
+export function inlineScriptHashes(html: string): string[] {
+  const hashes: string[] = [];
+  // Inline only: a tag with a src attribute loads from an origin instead.
+  const pattern = /<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/gi;
+
+  for (const match of html.matchAll(pattern)) {
+    const body = match[1];
+    if (!body) continue;
+    hashes.push(`'sha256-${crypto.createHash('sha256').update(body, 'utf8').digest('base64')}'`);
+  }
+  return hashes;
+}
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -37,6 +65,12 @@ export async function buildApp(): Promise<FastifyInstance> {
    * Security headers. The app is a self-contained SPA that talks only to its
    * own origin, so the policy can be strict.
    */
+  // Read once at boot: the built file does not change under a running server.
+  const indexFile = path.join(PUBLIC_DIR, 'index.html');
+  const scriptHashes = (fs.existsSync(indexFile) ? inlineScriptHashes(fs.readFileSync(indexFile, 'utf8')) : [])
+    .map((hash) => ' ' + hash)
+    .join('');
+
   app.addHook('onSend', async (request, reply) => {
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('X-Frame-Options', 'DENY');
@@ -53,8 +87,8 @@ export async function buildApp(): Promise<FastifyInstance> {
         'Content-Security-Policy',
         [
           "default-src 'self'",
-          "script-src 'self'",
-          // Vite inlines the theme bootstrap and injects style tags.
+          `script-src 'self'${scriptHashes}`,
+          // Vite injects style tags at runtime.
           "style-src 'self' 'unsafe-inline'",
           "img-src 'self' data:",
           "connect-src 'self' ws: wss:",

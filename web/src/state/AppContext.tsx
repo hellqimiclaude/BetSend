@@ -41,6 +41,7 @@ interface AppState {
 
   signIn: (email: string, password: string) => Promise<void>;
   completeSetup: (input: { token: string; password: string }) => Promise<void>;
+  completeFirstRun: (input: { adminToken: string; email: string; password: string }) => Promise<void>;
   signOut: () => Promise<void>;
   refreshUsers: () => Promise<void>;
   refreshInbox: () => Promise<void>;
@@ -228,6 +229,13 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
     [adopt],
   );
 
+  const completeFirstRun = useCallback(
+    async (input: { adminToken: string; email: string; password: string }) => {
+      adopt(await api.post<{ user: UserView; unread: number }>('/api/first-run', input));
+    },
+    [adopt],
+  );
+
   const signOut = useCallback(async () => {
     liveRef.current?.close();
     liveRef.current = null;
@@ -353,6 +361,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       dark,
       signIn,
       completeSetup,
+      completeFirstRun,
       signOut,
       refreshUsers,
       refreshInbox,
@@ -381,6 +390,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       dark,
       signIn,
       completeSetup,
+      completeFirstRun,
       signOut,
       refreshUsers,
       refreshInbox,
