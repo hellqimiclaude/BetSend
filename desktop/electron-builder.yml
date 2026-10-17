@@ -33,6 +33,10 @@ win:
   # until a certificate is set up; see the README.
 
 nsis:
+  # Adds the Explorer right-click entry on install and removes it on
+  # uninstall. See build/installer.nsh.
+  include: build/installer.nsh
+
   # Named explicitly. The default is "${productName} Setup ${version}.exe",
   # which lands next to the server's "BetSend-Setup-1.1.3.exe" differing only
   # in punctuation -- two installers in one release that nobody could tell

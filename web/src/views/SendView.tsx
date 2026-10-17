@@ -4,6 +4,7 @@ import { api, ApiError } from '../lib/api';
 import { t } from '../i18n';
 import { classNames, formatBytes, formatEta } from '../lib/format';
 import { UploadBatch, type BatchProgress } from '../lib/uploader';
+import { useHostFiles } from '../lib/useHostFiles';
 import { Button, Card, Chip, ProgressBar, SectionTitle } from '../components/ui';
 import { IconFile, IconPlus, IconSearch, IconUpload, IconX } from '../components/Icons';
 
@@ -24,6 +25,15 @@ export function SendView() {
   const [progress, setProgress] = useState<BatchProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+
+  /**
+   * In the desktop app the files live in the app, not the page: a file the
+   * user right-clicked in Explorer is a path, and a page cannot read a path.
+   * The app holds them and does the uploading; this screen still collects the
+   * recipients and shows the progress. In a browser `host` is null and
+   * everything below takes the original route.
+   */
+  const { host, staged, progress: hostProgress, stagePicked, unstage, clear: clearHost } = useHostFiles();
 
   const batchRef = useRef<UploadBatch | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -46,7 +56,69 @@ export function SendView() {
     );
   }, [directory, query]);
 
-  const totalBytes = useMemo(() => files.reduce((sum, file) => sum + file.size, 0), [files]);
+  /**
+   * One list for the screen to draw, from whichever side is holding the
+   * files. Everything below this works off rows and never asks which.
+   */
+  interface Row {
+    key: string;
+    name: string;
+    size: number;
+    bytesUploaded: number;
+    status?: string;
+    error?: string;
+    remove: () => void;
+  }
+
+  const rows = useMemo<Row[]>(() => {
+    if (host) {
+      return staged.map((file) => {
+        const live = hostProgress?.files.find((f) => f.id === file.id);
+        return {
+          key: file.id,
+          name: file.name,
+          size: file.size,
+          bytesUploaded: live?.bytesUploaded ?? 0,
+          status: live?.status,
+          error: live?.error,
+          remove: () => void unstage(file.id),
+        };
+      });
+    }
+    return files.map((file, index) => {
+      const live = progress?.items[index];
+      return {
+        key: `${file.name}-${file.size}-${file.lastModified}`,
+        name: file.name,
+        size: file.size,
+        bytesUploaded: live?.bytesUploaded ?? 0,
+        status: live?.status,
+        error: live?.error,
+        remove: () => setFiles((current) => current.filter((_, i) => i !== index)),
+      };
+    });
+  }, [host, staged, hostProgress, files, progress]);
+
+  const totalBytes = useMemo(() => rows.reduce((sum, row) => sum + row.size, 0), [rows]);
+
+  /**
+   * Overall progress, from whichever side is doing the uploading. The host
+   * reports no speed or estimate -- it uploads one file at a time and the
+   * per-file bars already show where it has got to.
+   */
+  const overall = useMemo(() => {
+    const source = host ? hostProgress : progress;
+    if (!source) return null;
+    return {
+      filesDone: source.filesDone,
+      fileCount: host ? (source as NonNullable<typeof hostProgress>).files.length : (source as BatchProgress).items.length,
+      bytesUploaded: source.bytesUploaded,
+      bytesTotal: source.bytesTotal,
+      fraction: source.fraction,
+      bytesPerSecond: host ? 0 : (source as BatchProgress).bytesPerSecond,
+      secondsRemaining: host ? 0 : (source as BatchProgress).secondsRemaining,
+    };
+  }, [host, hostProgress, progress]);
 
   const addFiles = useCallback(
     (incoming: FileList | File[]) => {
@@ -59,6 +131,16 @@ export function SendView() {
       }
 
       const accepted = maxSize > 0 ? list.filter((file) => file.size <= maxSize) : list;
+
+      // In the desktop app these go to the app too, so a dropped file and a
+      // right-clicked one travel by the same road rather than two.
+      if (host) {
+        void stagePicked(accepted).then((skipped) => {
+          if (skipped.length > 0) setError(`${skipped[0].name} — ${skipped[0].reason}`);
+        });
+        return;
+      }
+
       setFiles((current) => {
         // Same name + size + mtime means the user picked the same file twice.
         const signature = new Set(current.map((file) => `${file.name}:${file.size}:${file.lastModified}`));
@@ -66,7 +148,7 @@ export function SendView() {
         return [...current, ...fresh];
       });
     },
-    [maxSize],
+    [maxSize, host, stagePicked],
   );
 
   function toggleRecipient(name: string) {
@@ -77,6 +159,7 @@ export function SendView() {
 
   function reset() {
     setFiles([]);
+    if (host) void clearHost();
     setSelected([]);
     setNote('');
     setQuery('');
@@ -87,8 +170,28 @@ export function SendView() {
 
   async function send() {
     setError(null);
-    if (files.length === 0) return setError(t('send.needFiles'));
+    if (rows.length === 0) return setError(t('send.needFiles'));
     if (selected.length === 0) return setError(t('send.needRecipients'));
+
+    // The desktop app uploads and commits in one call: it is holding the
+    // files, so there is nothing for this side to upload.
+    if (host) {
+      setPhase('uploading');
+      const result = await host.send(selected, note);
+      setPhase('idle');
+      if (!result.ok) {
+        setError(result.error ?? 'The transfer could not be sent.');
+        return;
+      }
+      toast('success', t('send.success', { names: selected.join(', ') }));
+      setSelected([]);
+      setNote('');
+      setQuery('');
+      setError(null);
+      void refreshSent();
+      void refreshUsers();
+      return;
+    }
 
     const batch = new UploadBatch(files, {
       endpoint: bootstrap?.uploadEndpoint ?? '/api/uploads',
@@ -126,6 +229,11 @@ export function SendView() {
   }
 
   async function cancel() {
+    if (host) {
+      await host.cancel();
+      setPhase('idle');
+      return;
+    }
     await batchRef.current?.abort();
     batchRef.current = null;
     setPhase('idle');
@@ -188,37 +296,36 @@ export function SendView() {
         />
       </div>
 
-      {files.length > 0 ? (
+      {rows.length > 0 ? (
         <Card className="p-4">
           <SectionTitle hint={formatBytes(totalBytes)}>
-            {t('send.filesTitle', { count: files.length })}
+            {t('send.filesTitle', { count: rows.length })}
           </SectionTitle>
           <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-            {files.map((file, index) => {
-              const item = progress?.items[index];
-              const fraction = item && item.size > 0 ? item.bytesUploaded / item.size : 0;
+            {rows.map((row) => {
+              const fraction = row.size > 0 ? row.bytesUploaded / row.size : 0;
               return (
-                <li key={`${file.name}-${file.size}-${file.lastModified}`} className="py-2.5">
+                <li key={row.key} className="py-2.5">
                   <div className="flex items-center gap-3">
                     <IconFile className="h-4 w-4 shrink-0 text-slate-400" />
                     <span className="min-w-0 flex-1 truncate text-sm text-slate-700 dark:text-slate-200">
-                      {file.name}
+                      {row.name}
                     </span>
                     <span className="shrink-0 text-xs tabular-nums text-slate-500 dark:text-slate-400">
-                      {formatBytes(file.size)}
+                      {formatBytes(row.size)}
                     </span>
                     {!busy ? (
                       <button
                         type="button"
-                        aria-label={`Remove ${file.name}`}
-                        onClick={() => setFiles((current) => current.filter((_, i) => i !== index))}
+                        aria-label={`Remove ${row.name}`}
+                        onClick={row.remove}
                         className="shrink-0 rounded p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
                       >
                         <IconX className="h-4 w-4" />
                       </button>
                     ) : (
                       <span className="w-12 shrink-0 text-right text-xs tabular-nums text-slate-500">
-                        {item?.status === 'done' ? '100%' : `${Math.floor(fraction * 100)}%`}
+                        {row.status === 'done' ? '100%' : `${Math.floor(fraction * 100)}%`}
                       </span>
                     )}
                   </div>
@@ -226,11 +333,11 @@ export function SendView() {
                     <ProgressBar
                       className="mt-2"
                       value={fraction}
-                      tone={item?.status === 'done' ? 'green' : 'brand'}
+                      tone={row.status === 'done' ? 'green' : 'brand'}
                     />
                   ) : null}
-                  {item?.status === 'error' ? (
-                    <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{item.error}</p>
+                  {row.status === 'error' ? (
+                    <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{row.error}</p>
                   ) : null}
                 </li>
               );
@@ -242,7 +349,7 @@ export function SendView() {
               <Button variant="ghost" icon={<IconPlus className="h-4 w-4" />} onClick={() => inputRef.current?.click()}>
                 {t('send.addMore')}
               </Button>
-              <Button variant="ghost" onClick={() => setFiles([])}>
+              <Button variant="ghost" onClick={() => (host ? void clearHost() : setFiles([]))}>
                 {t('send.clearFiles')}
               </Button>
             </div>
@@ -322,25 +429,25 @@ export function SendView() {
         </p>
       ) : null}
 
-      {busy && progress ? (
+      {busy && overall ? (
         <Card className="p-4">
           <div className="flex items-baseline justify-between text-sm">
             <span className="font-medium text-slate-800 dark:text-slate-100">
               {phase === 'committing'
                 ? t('send.submitting')
-                : t('send.uploading', { done: progress.filesDone, total: progress.items.length })}
+                : t('send.uploading', { done: overall.filesDone, total: overall.fileCount })}
             </span>
             <span className="tabular-nums text-slate-500 dark:text-slate-400">
-              {formatBytes(progress.bytesUploaded)} / {formatBytes(progress.bytesTotal)}
+              {formatBytes(overall.bytesUploaded)} / {formatBytes(overall.bytesTotal)}
             </span>
           </div>
-          <ProgressBar className="mt-2.5 h-2" value={progress.fraction} />
+          <ProgressBar className="mt-2.5 h-2" value={overall.fraction} />
           <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
             <span className="tabular-nums">
-              {progress.bytesPerSecond > 0 ? t('send.speed', { speed: formatBytes(progress.bytesPerSecond) }) : '—'}
+              {overall.bytesPerSecond > 0 ? t('send.speed', { speed: formatBytes(overall.bytesPerSecond) }) : '—'}
             </span>
             <span className="tabular-nums">
-              {progress.secondsRemaining > 0 ? t('send.remaining', { time: formatEta(progress.secondsRemaining) }) : ''}
+              {overall.secondsRemaining > 0 ? t('send.remaining', { time: formatEta(overall.secondsRemaining) }) : ''}
             </span>
           </div>
         </Card>
@@ -355,7 +462,7 @@ export function SendView() {
         <Button
           variant="primary"
           loading={busy}
-          disabled={files.length === 0 || selected.length === 0}
+          disabled={rows.length === 0 || selected.length === 0}
           onClick={() => void send()}
           className="min-w-32"
         >

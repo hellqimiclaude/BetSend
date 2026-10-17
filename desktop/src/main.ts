@@ -13,7 +13,11 @@ import {
 } from 'electron';
 import { healthUrl, isSameServer, parseAddress } from './address.js';
 import { explainNetworkFailure, unreachableMessage } from './failure.js';
+import { sessionCookieFor } from './host.js';
+import { Outbox } from './outbox.js';
 import { readSettings, writeSettings, type Settings } from './settings.js';
+import { LaunchCollector, pathsFromArgv } from './staging.js';
+import { HostUploadBatch, type BatchProgress } from './uploader.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
@@ -26,6 +30,17 @@ let tray: Tray | null = null;
 /** Set on quit so closing the window hides to the tray instead of exiting. */
 let quitting = false;
 
+/** Files the user right-clicked in Explorer, waiting for recipients. */
+const outbox = new Outbox();
+let sending: HostUploadBatch | null = null;
+
+/**
+ * Windows runs the shell verb once per selected file, so a multi-file
+ * right-click arrives as a burst of launches. Gather them before showing
+ * anybody, or a thirty-file selection becomes thirty transfers.
+ */
+const launches = new LaunchCollector((paths) => acceptPaths(paths));
+
 /**
  * One instance only.
  *
@@ -36,7 +51,10 @@ let quitting = false;
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => showMainWindow());
+  app.on('second-instance', (_event, argv) => {
+    launches.add(pathsFromArgv(argv));
+    showMainWindow();
+  });
   void start();
 }
 
@@ -44,7 +62,12 @@ async function start(): Promise<void> {
   await app.whenReady();
   applyStartWithWindows();
   registerIpc();
+  registerHostIpc();
   createTray();
+
+  // Files from the launch that started the app, as opposed to a later
+  // right-click arriving through 'second-instance'.
+  launches.add(pathsFromArgv(process.argv));
 
   if (settings.serverUrl) {
     openMainWindow(settings.serverUrl);
@@ -108,7 +131,10 @@ function openMainWindow(serverUrl: string): void {
     backgroundColor: '#101118',
     autoHideMenuBar: true,
     webPreferences: {
-      // The window shows a remote page, so it gets no privileges at all.
+      // The window shows a remote page, so it gets no privileges beyond the
+      // host bridge -- which exposes three calls about files the user has
+      // already chosen in Explorer, and no way to name a file itself.
+      preload: path.join(here, 'host-preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -124,6 +150,10 @@ function openMainWindow(serverUrl: string): void {
   mainWindow.once('ready-to-show', () => {
     if (!process.argv.includes('--hidden')) mainWindow?.show();
   });
+
+  // A reload, a sign-in or a navigation loses whatever the page was told, so
+  // hand the staged files over again once it is ready to receive them.
+  mainWindow.webContents.on('did-finish-load', () => publishStaged());
 
   mainWindow.on('close', (event) => {
     // The X button hides; quitting is done from the tray.
@@ -360,6 +390,117 @@ async function probe(origin: string): Promise<{ ok: true } | { ok: false; error:
   } catch (err) {
     return { ok: false, error: explainNetworkFailure(err) };
   }
+}
+
+// --- files from the Explorer right-click menu -------------------------------
+
+function acceptPaths(paths: string[]): void {
+  const { skipped } = outbox.add(paths);
+
+  if (skipped.length > 0 && outbox.files.length === 0) {
+    // Nothing usable arrived, so say why rather than opening an empty window.
+    dialog.showMessageBox({
+      type: 'info',
+      title: 'BetSend',
+      message: skipped.length === 1 ? 'That file cannot be sent.' : 'Those files cannot be sent.',
+      detail: skipped.map((s) => `${path.basename(s.path)} — ${s.reason}`).join('\n'),
+    });
+    return;
+  }
+
+  publishStaged();
+  showMainWindow();
+}
+
+function publishStaged(): void {
+  mainWindow?.webContents.send('host:staged-changed', outbox.forRenderer());
+}
+
+function registerHostIpc(): void {
+  ipcMain.handle('host:staged', () => outbox.forRenderer());
+
+  /**
+   * Files dropped on the page, routed through the host so the desktop app
+   * uploads everything the same way. The paths come from the preload's
+   * getPathForFile, so they are files the user themselves chose.
+   */
+  ipcMain.handle('host:stage-paths', (_event, paths: unknown) => {
+    const list = Array.isArray(paths) ? paths.filter((p): p is string => typeof p === 'string') : [];
+    const { skipped } = outbox.add(list);
+    publishStaged();
+    return { files: outbox.forRenderer(), skipped: skipped.map((s) => ({ name: path.basename(s.path), reason: s.reason })) };
+  });
+
+  ipcMain.handle('host:unstage', (_event, id: unknown) => {
+    if (typeof id === 'string') outbox.remove(id);
+    return outbox.forRenderer();
+  });
+
+  ipcMain.handle('host:clear', () => {
+    outbox.clear();
+    publishStaged();
+  });
+
+  ipcMain.handle('host:cancel', async () => {
+    await sending?.cancel();
+    sending = null;
+  });
+
+  /**
+   * Upload everything staged, then commit it as one transfer.
+   *
+   * The commit is the same call the web page makes; only the upload differs,
+   * because only this process can read a file off the disk.
+   */
+  ipcMain.handle('host:send', async (_event, input: unknown) => {
+    const { recipients, note } = (input ?? {}) as { recipients?: unknown; note?: unknown };
+    const to = Array.isArray(recipients) ? recipients.filter((r): r is string => typeof r === 'string') : [];
+
+    if (outbox.files.length === 0) return { ok: false, error: 'There are no files to send.' };
+    if (to.length === 0) return { ok: false, error: 'Choose at least one person to send to.' };
+    if (sending) return { ok: false, error: 'A transfer is already going.' };
+
+    const origin = settings.serverUrl;
+    if (!origin) return { ok: false, error: 'No server address is set.' };
+
+    const cookie = await sessionCookieFor(origin);
+    if (!cookie) return { ok: false, error: 'You are not signed in. Sign in and try again.' };
+
+    const batch = new HostUploadBatch(outbox.files, {
+      origin,
+      cookie,
+      chunkSize: 8 * 1024 * 1024,
+      onProgress: (progress: BatchProgress) => {
+        mainWindow?.webContents.send('host:progress', progress);
+        mainWindow?.setProgressBar(progress.running ? progress.fraction : -1);
+      },
+    });
+    sending = batch;
+
+    try {
+      const uploads = await batch.start();
+
+      const response = await fetch(`${origin.replace(/\/+$/, '')}/api/transfers`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie },
+        body: JSON.stringify({ uploads, recipients: to, note: typeof note === 'string' ? note : '' }),
+      });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+        return { ok: false, error: body?.error?.message ?? `The server refused the transfer (${response.status}).` };
+      }
+
+      outbox.clear();
+      publishStaged();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    } finally {
+      sending = null;
+      mainWindow?.setProgressBar(-1);
+    }
+  });
 }
 
 process.on('uncaughtException', (err) => {
