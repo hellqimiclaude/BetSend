@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import * as tus from 'tus-js-client';
-import type { StagedFile } from './staging.js';
+import type { PendingFile } from './pending.js';
 
 /**
  * Uploading files the app was given by Explorer.
@@ -41,6 +41,12 @@ export interface UploaderOptions {
   /** The session cookie from the signed-in window, as a Cookie header value. */
   cookie: string;
   chunkSize: number;
+  /**
+   * Where tus records how far each file got. Giving it a file rather than
+   * leaving it in memory is what lets an upload survive the app closing:
+   * on the next run tus finds the URL and asks the server for the offset.
+   */
+  urlStoragePath?: string;
   onProgress?: (progress: BatchProgress) => void;
 }
 
@@ -72,8 +78,11 @@ export class HostUploadBatch {
   private running = false;
   private cancelled = false;
 
+  private readonly fingerprints = new Map<string, string>();
+  private readonly urlStorage: tus.UrlStorage | undefined;
+
   constructor(
-    staged: readonly StagedFile[],
+    staged: readonly PendingFile[],
     private readonly options: UploaderOptions,
   ) {
     this.files = staged.map((file) => ({
@@ -84,7 +93,11 @@ export class HostUploadBatch {
       status: 'queued',
       uploadId: null,
     }));
-    for (const file of staged) this.paths.set(file.id, file.path);
+    for (const file of staged) {
+      this.paths.set(file.id, file.path);
+      if (file.fingerprint) this.fingerprints.set(file.id, file.fingerprint);
+    }
+    this.urlStorage = options.urlStoragePath ? new tus.FileUrlStorage(options.urlStoragePath) : undefined;
   }
 
   get progress(): BatchProgress {
@@ -148,6 +161,8 @@ export class HostUploadBatch {
       // it cannot measure a stream without consuming it.
       const stream = fs.createReadStream(source);
 
+      const fingerprint = this.fingerprints.get(file.id);
+
       const upload = new tus.Upload(stream, {
         endpoint: `${this.options.origin.replace(/\/+$/, '')}/api/uploads`,
         chunkSize: this.options.chunkSize,
@@ -155,6 +170,13 @@ export class HostUploadBatch {
         retryDelays: [0, 1000, 3000, 5000, 10000, 20000],
         headers: { cookie: this.options.cookie },
         metadata: { filename: file.name, filetype: 'application/octet-stream' },
+        // Resuming needs all three: somewhere to keep the URL, a name for
+        // this file that is the same on the next run, and permission to
+        // write it down.
+        urlStorage: this.urlStorage,
+        fingerprint: fingerprint ? async () => fingerprint : undefined,
+        storeFingerprintForResuming: Boolean(fingerprint && this.urlStorage),
+        removeFingerprintOnSuccess: true,
         onProgress: (uploaded) => {
           file.bytesUploaded = uploaded;
           this.emit();
@@ -181,7 +203,25 @@ export class HostUploadBatch {
       });
 
       this.uploads.set(file.id, upload);
-      upload.start();
+
+      if (!fingerprint || !this.urlStorage) {
+        upload.start();
+        return;
+      }
+
+      // Pick up where a previous run stopped, if the server still has it.
+      upload
+        .findPreviousUploads()
+        .then((previous) => {
+          if (this.cancelled) return;
+          if (previous.length > 0) upload.resumeFromPreviousUpload(previous[0]);
+          upload.start();
+        })
+        .catch(() => {
+          // A missing or unreadable record is not a reason to refuse to
+          // upload; it only means starting from the beginning.
+          if (!this.cancelled) upload.start();
+        });
     });
   }
 

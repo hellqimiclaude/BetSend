@@ -815,8 +815,40 @@ rather than becoming a blank window. To point it somewhere else later, use
 **Change server address** on the tray icon.
 
 Closing the window leaves it in the tray so transfers can finish; **Quit
-BetSend** on the tray menu exits properly. It starts with Windows by default,
-which the tray menu can turn off.
+BetSend** on the tray menu exits properly, and warns first if something is
+still uploading. It starts with Windows by default, which the tray menu can
+turn off.
+
+### Send with BetSend
+
+Select files in Explorer, right-click, **Send with BetSend**. The app comes
+forward with them staged and you pick recipients. The entry is written under
+`HKCU` by the installer, so no administrator rights are needed, and
+uninstalling removes it.
+
+Windows runs a shell verb once per selected file, so a thirty-file right-click
+launches the app thirty times. BetSend gathers those back into one transfer.
+Folders are refused rather than walked — a folder could be four files or forty
+thousand.
+
+### Uploads outlive the window
+
+The desktop app uploads from its own process, not from the page, because a web
+page cannot read a file it was only told the path of. Two consequences worth
+knowing:
+
+- **Closing the window does not stop a transfer.** It carries on in the tray,
+  which shows the percentage and offers **Cancel transfer**.
+- **Quitting, a crash or a reboot does not lose one either.** What was in
+  flight is written to `pending.json`, tus keeps the offset each file reached,
+  and the next run carries on from there rather than resending a 10 GB file.
+  If the session has expired, it waits for the next sign-in instead of
+  failing.
+
+A file edited while a transfer was interrupted is **not** resumed: the bytes
+already on the server came from the old version, and splicing the new onto
+them would hand the recipient a file that never existed. It is reported and
+has to be sent again.
 
 ### Building it
 

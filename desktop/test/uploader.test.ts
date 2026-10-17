@@ -208,6 +208,105 @@ describe('uploading from disk, the way a right-click does', () => {
   });
 });
 
+/**
+ * Resuming after the app stops mid-upload.
+ *
+ * The first upload runs in a child process which is then killed outright --
+ * no clean shutdown, no chance to tidy up, which is the case that matters.
+ * A cancel from inside this process would not do: cancelling tells the
+ * server to throw the partial file away, which is the opposite of this.
+ */
+describe('carrying on after the app is killed', () => {
+  test('the second run continues from where the first stopped', async () => {
+    const source = makeFile('interrupted.bin', 24 * 1024 * 1024);
+    const urlStorage = path.join(workDir, 'tus-urls.json');
+    const { files } = stageFiles([source]);
+
+    const child = path.join(workDir, 'upload-child.mjs');
+    fs.writeFileSync(
+      child,
+      `
+      import { HostUploadBatch } from ${JSON.stringify(path.join(repoRoot, 'desktop', 'src', 'uploader.ts'))};
+      const files = ${JSON.stringify(files)};
+      const batch = new HostUploadBatch(files, {
+        origin: ${JSON.stringify(origin)},
+        cookie: ${JSON.stringify(cookie)},
+        chunkSize: 1024 * 1024,
+        urlStoragePath: ${JSON.stringify(urlStorage)},
+        onProgress: (p) => { if (p.bytesUploaded > 0) console.log('PROGRESS ' + p.bytesUploaded); },
+      });
+      batch.start().catch(() => {});
+      `,
+    );
+
+    // Kill it once the server has acknowledged a few megabytes.
+    const uploaded = await new Promise<number>((resolve, reject) => {
+      const proc = spawn(process.execPath, ['--import', 'tsx', child], { stdio: ['ignore', 'pipe', 'ignore'] });
+      let last = 0;
+      const timer = setTimeout(() => {
+        proc.kill('SIGKILL');
+        reject(new Error('the child never reported progress'));
+      }, 30_000);
+
+      proc.stdout.on('data', (chunk: Buffer) => {
+        for (const line of String(chunk).split('\n')) {
+          const match = /^PROGRESS (\d+)$/.exec(line.trim());
+          if (!match) continue;
+          last = Number(match[1]);
+          if (last >= 4 * 1024 * 1024) {
+            clearTimeout(timer);
+            proc.kill('SIGKILL');
+            resolve(last);
+          }
+        }
+      });
+      proc.on('exit', () => {
+        clearTimeout(timer);
+        if (last > 0) resolve(last);
+      });
+    });
+
+    assert.ok(uploaded >= 4 * 1024 * 1024, `expected several MB before the kill, got ${uploaded}`);
+    assert.ok(fs.existsSync(urlStorage), 'tus should have written down where to continue from');
+
+    // A fresh batch, as the app would build on its next run.
+    const offsets: number[] = [];
+    const resumed = new HostUploadBatch(files, {
+      origin,
+      cookie,
+      chunkSize: 1024 * 1024,
+      urlStoragePath: urlStorage,
+      onProgress: (p) => offsets.push(p.bytesUploaded),
+    });
+
+    const ids = await resumed.start();
+    assert.equal(ids.length, 1);
+
+    // The proof: it did not begin at zero.
+    const firstReported = offsets.find((o) => o > 0) ?? 0;
+    assert.ok(
+      firstReported >= uploaded,
+      `resumed from ${firstReported}, but ${uploaded} had already been sent — it started over`,
+    );
+  });
+
+  /**
+   * If the file changed while the app was off, the bytes already on the
+   * server came from a file that no longer exists. Finishing it would hand
+   * the recipient something that was never on anybody's disk.
+   */
+  test('a file edited in between is not resumed onto the old bytes', () => {
+    const source = makeFile('edited.bin', 1024);
+    const { files } = stageFiles([source]);
+    const before = files[0].fingerprint;
+
+    fs.writeFileSync(source, crypto.randomBytes(2048));
+    const after = stageFiles([source]).files[0].fingerprint;
+
+    assert.notEqual(before, after, 'an edited file must look different to tus, or it resumes onto stale bytes');
+  });
+});
+
 describe('helpers', () => {
   test('the upload id is the last segment of the tus URL', () => {
     assert.equal(uploadIdFromUrl('http://pc:8080/api/uploads/abc123'), 'abc123');

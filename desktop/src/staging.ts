@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -19,6 +20,27 @@ export interface StagedFile {
   path: string;
   name: string;
   size: number;
+  /**
+   * Identifies the file to tus so a half-finished upload can be picked up on
+   * the next run. See fingerprintFor.
+   */
+  fingerprint: string;
+}
+
+/**
+ * Path, size and modification time.
+ *
+ * Size and mtime are in it deliberately: if somebody edits a file while it is
+ * half uploaded, resuming would splice the old bytes onto the new and the
+ * recipient would get a file that never existed. A changed fingerprint makes
+ * tus start again, which is the only correct answer.
+ */
+export function fingerprintFor(file: string, size: number, mtimeMs: number): string {
+  return crypto
+    .createHash('sha256')
+    .update(`${path.resolve(file).toLowerCase()}|${size}|${Math.floor(mtimeMs)}`)
+    .digest('hex')
+    .slice(0, 32);
 }
 
 export interface StagingResult {
@@ -100,7 +122,13 @@ export function stageFiles(paths: readonly string[], alreadyStaged: readonly Sta
     }
 
     seen.add(key);
-    files.push({ id: `s${++counter}`, path: full, name: path.basename(full), size: stats.size });
+    files.push({
+      id: `s${++counter}`,
+      path: full,
+      name: path.basename(full),
+      size: stats.size,
+      fingerprint: fingerprintFor(full, stats.size, stats.mtimeMs),
+    });
   }
 
   return { files, skipped };

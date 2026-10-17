@@ -7,20 +7,27 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  Notification,
   shell,
   Tray,
+  session as electronSession,
   type IpcMainInvokeEvent,
 } from 'electron';
 import { healthUrl, isSameServer, parseAddress } from './address.js';
 import { explainNetworkFailure, unreachableMessage } from './failure.js';
-import { sessionCookieFor } from './host.js';
+import { COOKIE_NAME, sessionCookieFor } from './host.js';
 import { Outbox } from './outbox.js';
+import { checkResumable, clearPending, readPending, writePending, type PendingFile } from './pending.js';
 import { readSettings, writeSettings, type Settings } from './settings.js';
 import { LaunchCollector, pathsFromArgv } from './staging.js';
 import { HostUploadBatch, type BatchProgress } from './uploader.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
+/** The transfer that was in flight, so it can be carried on after a restart. */
+const PENDING_FILE = path.join(app.getPath('userData'), 'pending.json');
+/** Where tus records how far each file got. */
+const TUS_URLS_FILE = path.join(app.getPath('userData'), 'tus-urls.json');
 const HEALTH_TIMEOUT_MS = 4000;
 
 let settings: Settings = readSettings(SETTINGS_FILE);
@@ -33,6 +40,8 @@ let quitting = false;
 /** Files the user right-clicked in Explorer, waiting for recipients. */
 const outbox = new Outbox();
 let sending: HostUploadBatch | null = null;
+/** The latest progress, for the tray and for a window that opens mid-send. */
+let lastProgress: BatchProgress | null = null;
 
 /**
  * Windows runs the shell verb once per selected file, so a multi-file
@@ -76,6 +85,12 @@ async function start(): Promise<void> {
   }
 
   app.on('activate', () => showMainWindow());
+
+  watchForSignIn();
+
+  // After the window exists, so its notifications and progress have somewhere
+  // to go.
+  void resumePending();
 }
 
 // Closing the last window is not quitting: the app sits in the tray so a
@@ -153,7 +168,12 @@ function openMainWindow(serverUrl: string): void {
 
   // A reload, a sign-in or a navigation loses whatever the page was told, so
   // hand the staged files over again once it is ready to receive them.
-  mainWindow.webContents.on('did-finish-load', () => publishStaged());
+  mainWindow.webContents.on('did-finish-load', () => {
+    publishStaged();
+    // A window opened in the middle of a transfer should show it, not an
+    // idle screen with a progress bar that only appears on the next tick.
+    if (lastProgress) mainWindow?.webContents.send('host:progress', lastProgress);
+  });
 
   mainWindow.on('close', (event) => {
     // The X button hides; quitting is done from the tray.
@@ -184,6 +204,28 @@ function showMainWindow(): void {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+}
+
+/**
+ * Quitting with an upload running loses nothing permanently -- it resumes on
+ * the next run -- but the recipient does not get the files until then, which
+ * is not what somebody closing a tray icon usually has in mind.
+ */
+async function quitSafely(): Promise<void> {
+  if (sending && lastProgress?.running) {
+    const { response } = await dialog.showMessageBox({
+      type: 'question',
+      buttons: ['Keep sending', 'Quit anyway'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'BetSend',
+      message: 'A transfer is still going.',
+      detail: 'Quitting stops it. It will carry on from where it stopped the next time BetSend opens.',
+    });
+    if (response === 0) return;
+  }
+  quitting = true;
+  app.quit();
 }
 
 function openSetupWindow(): void {
@@ -302,8 +344,25 @@ function createTray(): void {
 }
 
 function refreshTrayMenu(): void {
-  tray?.setContextMenu(
+  if (!tray) return;
+
+  // The window is often hidden while this runs -- that is the point of
+  // uploading out here -- so the tray is the only place progress shows.
+  const busy = lastProgress?.running ?? false;
+  const percent = busy ? Math.floor((lastProgress?.fraction ?? 0) * 100) : 0;
+  const remaining = busy ? (lastProgress?.files.length ?? 0) - (lastProgress?.filesDone ?? 0) : 0;
+
+  tray.setToolTip(busy ? `BetSend — sending, ${percent}%` : 'BetSend');
+
+  tray.setContextMenu(
     Menu.buildFromTemplate([
+      ...(busy
+        ? ([
+            { label: `Sending ${remaining} file(s) — ${percent}%`, enabled: false },
+            { label: 'Cancel transfer', click: () => void sending?.cancel() },
+            { type: 'separator' },
+          ] as Electron.MenuItemConstructorOptions[])
+        : []),
       { label: 'Open BetSend', click: () => showMainWindow() },
       { type: 'separator' },
       {
@@ -319,10 +378,7 @@ function refreshTrayMenu(): void {
       { type: 'separator' },
       {
         label: 'Quit BetSend',
-        click: () => {
-          quitting = true;
-          app.quit();
-        },
+        click: () => void quitSafely(),
       },
     ]),
   );
@@ -460,47 +516,155 @@ function registerHostIpc(): void {
     if (to.length === 0) return { ok: false, error: 'Choose at least one person to send to.' };
     if (sending) return { ok: false, error: 'A transfer is already going.' };
 
-    const origin = settings.serverUrl;
-    if (!origin) return { ok: false, error: 'No server address is set.' };
-
-    const cookie = await sessionCookieFor(origin);
-    if (!cookie) return { ok: false, error: 'You are not signed in. Sign in and try again.' };
-
-    const batch = new HostUploadBatch(outbox.files, {
-      origin,
-      cookie,
-      chunkSize: 8 * 1024 * 1024,
-      onProgress: (progress: BatchProgress) => {
-        mainWindow?.webContents.send('host:progress', progress);
-        mainWindow?.setProgressBar(progress.running ? progress.fraction : -1);
-      },
-    });
-    sending = batch;
-
-    try {
-      const uploads = await batch.start();
-
-      const response = await fetch(`${origin.replace(/\/+$/, '')}/api/transfers`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', cookie },
-        body: JSON.stringify({ uploads, recipients: to, note: typeof note === 'string' ? note : '' }),
-      });
-
-      if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
-        return { ok: false, error: body?.error?.message ?? `The server refused the transfer (${response.status}).` };
-      }
-
+    const files = [...outbox.files];
+    const result = await performSend(files, to, typeof note === 'string' ? note : '');
+    if (result.ok) {
       outbox.clear();
       publishStaged();
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    } finally {
-      sending = null;
-      mainWindow?.setProgressBar(-1);
     }
+    return result;
   });
+}
+
+// --- sending ----------------------------------------------------------------
+
+/**
+ * Upload the files and commit the transfer, writing down what is in flight
+ * first so a restart can pick it up.
+ *
+ * The record is deliberately written before the first byte: a crash two
+ * seconds in should still be resumable, and an orphaned record costs nothing
+ * -- it is checked against the disk before anything is retried.
+ */
+async function performSend(
+  files: PendingFile[],
+  recipients: string[],
+  note: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const origin = settings.serverUrl;
+  if (!origin) return { ok: false, error: 'No server address is set.' };
+
+  const cookie = await sessionCookieFor(origin);
+  if (!cookie) return { ok: false, error: 'You are not signed in. Open BetSend, sign in, and try again.' };
+
+  writePending(PENDING_FILE, { files, recipients, note, startedAt: Date.now() });
+
+  const batch = new HostUploadBatch(files, {
+    origin,
+    cookie,
+    chunkSize: 8 * 1024 * 1024,
+    urlStoragePath: TUS_URLS_FILE,
+    onProgress: (progress) => {
+      lastProgress = progress;
+      mainWindow?.webContents.send('host:progress', progress);
+      mainWindow?.setProgressBar(progress.running ? progress.fraction : -1);
+      refreshTrayMenu();
+    },
+  });
+  sending = batch;
+
+  try {
+    const uploads = await batch.start();
+
+    const response = await fetch(`${origin.replace(/\/+$/, '')}/api/transfers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ uploads, recipients, note }),
+    });
+
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+      const error = body?.error?.message ?? `The server refused the transfer (${response.status}).`;
+      announce('BetSend could not send your files', error);
+      return { ok: false, error };
+    }
+
+    clearPending(PENDING_FILE);
+    announce(
+      files.length === 1 ? `${files[0].name} sent` : `${files.length} files sent`,
+      `Delivered to ${recipients.join(', ')}.`,
+    );
+    return { ok: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    // The record stays: this is exactly the case resuming exists for.
+    announce('BetSend could not send your files', error);
+    return { ok: false, error };
+  } finally {
+    sending = null;
+    lastProgress = null;
+    mainWindow?.setProgressBar(-1);
+    refreshTrayMenu();
+  }
+}
+
+/**
+ * Carry on a transfer the app was in the middle of when it stopped.
+ *
+ * Silent when there is nothing to do. When there is, it says so rather than
+ * uploading in the background unannounced -- somebody who quit mid-transfer
+ * and reopened the app a day later deserves to know it started again.
+ */
+async function resumePending(): Promise<void> {
+  if (sending) return;
+
+  const pending = readPending(PENDING_FILE);
+  if (!pending) return;
+
+  /*
+   * The session cookie normally outlives a restart, but not if it expired,
+   * the user signed out, or the jar was cleared. Leave the record alone and
+   * come back after the next sign-in rather than announcing a failure for
+   * something that is about to be fixed by itself.
+   */
+  const origin = settings.serverUrl;
+  if (!origin || !(await sessionCookieFor(origin))) return;
+
+  const { resumable, gone } = checkResumable(pending);
+
+  if (resumable.length === 0) {
+    clearPending(PENDING_FILE);
+    announce('BetSend could not finish an earlier transfer', gone[0]?.reason ?? 'The files are no longer available.');
+    return;
+  }
+
+  if (gone.length > 0) {
+    // Some of it can go on, but not all, and sending half of what somebody
+    // asked for without telling them would be worse than stopping.
+    clearPending(PENDING_FILE);
+    announce(
+      'An earlier transfer could not be finished',
+      `${gone.map((g) => g.name).join(', ')} — ${gone[0].reason}. Send them again.`,
+    );
+    return;
+  }
+
+  announce('Carrying on with an earlier transfer', `${resumable.length} file(s) to ${pending.recipients.join(', ')}.`);
+  await performSend(resumable, pending.recipients, pending.note);
+}
+
+/**
+ * Notice when somebody signs in, so a transfer that was waiting for a session
+ * can get going.
+ *
+ * The obvious hook -- the page finishing a load -- is the wrong one: signing
+ * in happens inside the single-page app with no navigation at all, so that
+ * event never comes. A cookie appearing in the jar is the actual moment.
+ */
+function watchForSignIn(): void {
+  electronSession.defaultSession.cookies.on('changed', (_event, cookie, _cause, removed) => {
+    if (removed || cookie.name !== COOKIE_NAME) return;
+    void resumePending();
+  });
+}
+
+function announce(title: string, body: string): void {
+  if (!Notification.isSupported()) return;
+  try {
+    new Notification({ title, body, icon: path.join(here, 'icon.png') }).show();
+  } catch {
+    /* a notification failing is never worth interrupting a transfer over */
+  }
 }
 
 process.on('uncaughtException', (err) => {
