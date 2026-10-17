@@ -20,5 +20,8 @@
     "typescript": "^5.7.3"
   },
   "description": "BetSend desktop client \u2014 send files to colleagues without opening a browser.",
-  "author": "BetLive"
+  "author": "BetLive",
+  "dependencies": {
+    "tus-js-client": "^4.3.1"
+  }
 }
