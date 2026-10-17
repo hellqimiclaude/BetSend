@@ -757,6 +757,32 @@ transfers are unaffected.
 That means the WebSocket dropped; the sidebar shows "Reconnecting to the server…" while it
 retries. A page refresh forces it.
 
+## Backups
+
+The database holds the accounts, who sent what to whom and what has been
+read. It is the only thing here worth backing up — the uploaded files are
+deleted after the retention window anyway, so a restored database whose
+transfers have expired loses nothing anybody expected to keep.
+
+**Do not copy `betsend.db` in Explorer.** SQLite is in WAL mode, so recent
+writes live in `betsend.db-wal` until they are folded in, and a plain copy can
+catch a half-written page. Use:
+
+```
+npm run backup -w server                      # -> <storage>\backups\
+npm run backup -w server -- D:\backups\betsend
+```
+
+It uses SQLite's own backup API, which handles a live database properly, reads
+without modifying the original, checks the copy's integrity, confirms it holds
+the same number of users and transfers as the original, and folds the log in
+so the result is a single file you can put on a USB stick.
+
+To restore: stop the BetSend task, put the backup in place of
+`betsend.db` (deleting any `-wal` and `-shm` beside it), and start it again.
+
+Worth scheduling. Task Scheduler, daily, running that command is enough.
+
 ## House style
 
 The colours come from betlive.com, sampled off a screenshot of the site rather

@@ -195,11 +195,29 @@ function pickBool(env: string | undefined, file: unknown, fallback: boolean): bo
   return ['1', 'true', 'yes', 'on'].includes(String(raw).toLowerCase());
 }
 
+/**
+ * Resolve a path from config.json relative to config.json itself.
+ *
+ * `path.resolve` would use the working directory, so `"storageDir": "./data"`
+ * would mean a different folder depending on where the server was started
+ * from -- and a different one again for a tool run from the server workspace.
+ * Relative to the file is what anybody writing that line means.
+ *
+ * A value from the environment keeps the old behaviour: it is set by whoever
+ * is starting the process, so their working directory is the right anchor.
+ */
+function resolveFromConfig(fromEnv: string | undefined, fromFile: unknown, fallback: string): string {
+  if (fromEnv !== undefined && fromEnv !== '') return path.resolve(fromEnv);
+  if (typeof fromFile === 'string' && fromFile !== '') {
+    const base = configFilePath ? path.dirname(configFilePath) : process.cwd();
+    return path.resolve(base, fromFile);
+  }
+  return path.resolve(fallback);
+}
+
 export function loadConfig(): AppConfig {
   const file = readConfigFile();
-  const storageDir = path.resolve(
-    pickString(process.env.STORAGE_DIR, file.storageDir, DEFAULTS.storageDir),
-  );
+  const storageDir = resolveFromConfig(process.env.STORAGE_DIR, file.storageDir, DEFAULTS.storageDir);
   const registrationMode = pickString(
     process.env.REGISTRATION_MODE,
     file.registrationMode,
@@ -210,9 +228,7 @@ export function loadConfig(): AppConfig {
     host: pickString(process.env.HOST, file.host, DEFAULTS.host),
     port: pickNumber(process.env.PORT, file.port, DEFAULTS.port),
     storageDir,
-    dbPath: path.resolve(
-      pickString(process.env.DB_PATH, file.dbPath, path.join(storageDir, 'betsend.db')),
-    ),
+    dbPath: resolveFromConfig(process.env.DB_PATH, file.dbPath, path.join(storageDir, 'betsend.db')),
     adminToken: pickString(process.env.ADMIN_TOKEN, file.adminToken, DEFAULTS.adminToken),
     retentionHours: pickNumber(process.env.RETENTION_HOURS, file.retentionHours, DEFAULTS.retentionHours),
     maxUploadSize: pickNumber(process.env.MAX_UPLOAD_SIZE, file.maxUploadSize, DEFAULTS.maxUploadSize),

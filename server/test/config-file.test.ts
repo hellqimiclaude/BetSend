@@ -1,4 +1,4 @@
-import { test, describe, afterEach } from 'node:test';
+import { test, describe, afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -58,6 +58,64 @@ describe('reading config.json', () => {
     process.env.CONFIG_FILE = file;
 
     assert.throws(() => loadConfig(), (err: Error) => err.message.includes(file));
+  });
+});
+
+/**
+ * A relative path in config.json used to resolve against the working
+ * directory, so the server and a tool run from the server workspace would
+ * open different databases -- the same class of problem that once had the
+ * seed script writing somewhere nobody was reading.
+ */
+describe('relative paths in config.json', () => {
+  /**
+   * The test harness sets STORAGE_DIR for every test, and the environment
+   * deliberately beats the file -- so these have to take it away to see what
+   * the file alone does.
+   */
+  const envStorageDir = process.env.STORAGE_DIR;
+  beforeEach(() => {
+    delete process.env.STORAGE_DIR;
+  });
+  afterEach(() => {
+    if (envStorageDir !== undefined) process.env.STORAGE_DIR = envStorageDir;
+  });
+
+  test('are relative to config.json, not to wherever the process started', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'betsend-relative-'));
+    const file = path.join(dir, 'config.json');
+    fs.writeFileSync(file, JSON.stringify({ storageDir: './data' }));
+    tempFiles.push(file);
+    process.env.CONFIG_FILE = file;
+
+    const config = loadConfig();
+
+    assert.equal(config.storageDir, path.join(dir, 'data'));
+    assert.equal(config.dbPath, path.join(dir, 'data', 'betsend.db'));
+    assert.notEqual(config.storageDir, path.resolve('./data'), 'it used the working directory');
+  });
+
+  test('an absolute path is left exactly as written', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'betsend-absolute-'));
+    const file = path.join(dir, 'config.json');
+    const storage = path.join(dir, 'elsewhere');
+    fs.writeFileSync(file, JSON.stringify({ storageDir: storage }));
+    tempFiles.push(file);
+    process.env.CONFIG_FILE = file;
+
+    assert.equal(loadConfig().storageDir, storage);
+  });
+
+  /** Set by whoever started the process, so their directory is the anchor. */
+  test('STORAGE_DIR from the environment still resolves against the working directory', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'betsend-env-'));
+    const file = path.join(dir, 'config.json');
+    fs.writeFileSync(file, JSON.stringify({ storageDir: './from-file' }));
+    tempFiles.push(file);
+    process.env.CONFIG_FILE = file;
+    process.env.STORAGE_DIR = './from-env';
+
+    assert.equal(loadConfig().storageDir, path.resolve('./from-env'));
   });
 });
 

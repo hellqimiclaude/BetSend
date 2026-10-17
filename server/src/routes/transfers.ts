@@ -189,11 +189,4 @@ export default async function transferRoutes(app: FastifyInstance): Promise<void
     const user = currentUser(request);
     return { unread: unreadCount(user.id) };
   });
-
-  app.get('/api/transfers/:id/exists', async (request) => {
-    const { id } = request.params as { id: string };
-    const transfer = requireTransfer(id);
-    if (transfer.state !== 'active') throw notFound('That transfer is no longer available.', 'transfer_gone');
-    return { ok: true };
-  });
 }
