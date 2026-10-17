@@ -1,3 +1,8 @@
+**New in this release:** BetLive's colours and type throughout, **Send with
+BetSend** in the Explorer right-click menu, and transfers that carry on when
+the window is closed — and resume from where they stopped if the app or the
+machine restarts.
+
 Two separate downloads:
 
 - **`BetSend-Setup-*.exe`** — the **server**. Install this on *one* office PC, the
