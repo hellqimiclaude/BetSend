@@ -93,6 +93,16 @@ function Get-LanAddresses {
   }
 }
 
+# The name is what colleagues should be given, not the IP address.
+#
+# Almost every office PC gets its address from DHCP, so the IP changes on a
+# lease expiry or a reboot -- and when it does, every bookmark and every
+# desktop app in the building stops working at once. The computer name
+# resolves on a LAN and survives that.
+function Get-ComputerName {
+  try { return $env:COMPUTERNAME.ToLower() } catch { return '' }
+}
+
 # --- 0. preconditions ------------------------------------------------------
 
 $AppRoot = Split-Path -Parent $PSScriptRoot
@@ -325,12 +335,29 @@ Write-Host ''
 Write-Host '  ------------------------------------------------' -ForegroundColor DarkGray
 Write-Host '   BetSend is set up.' -ForegroundColor Green
 Write-Host ''
+$computerName = Get-ComputerName
 Write-Host '   Send this address round the office:' -ForegroundColor White
-foreach ($address in $addresses) {
-  Write-Host "     http://$address$suffix" -ForegroundColor Cyan
-}
-if ($addresses.Count -eq 0) {
-  Write-Host "     http://<this machine's IP>$suffix" -ForegroundColor Cyan
+if ($computerName) {
+  Write-Host "     http://$computerName$suffix" -ForegroundColor Cyan
+  Write-Host ''
+  Write-Host '   Use the name, not the IP address below: this machine almost' -ForegroundColor DarkGray
+  Write-Host '   certainly gets its address from DHCP, and when that changes,' -ForegroundColor DarkGray
+  Write-Host '   every bookmark in the building breaks at once.' -ForegroundColor DarkGray
+  if ($addresses.Count -gt 0) {
+    Write-Host ''
+    Write-Host '   If the name does not resolve on your network, fall back to:' -ForegroundColor DarkGray
+    foreach ($address in $addresses) {
+      Write-Host "     http://$address$suffix" -ForegroundColor DarkGray
+    }
+    Write-Host '   ...and ask IT to reserve that address for this machine.' -ForegroundColor DarkGray
+  }
+} else {
+  foreach ($address in $addresses) {
+    Write-Host "     http://$address$suffix" -ForegroundColor Cyan
+  }
+  if ($addresses.Count -eq 0) {
+    Write-Host "     http://<this machine's name>$suffix" -ForegroundColor Cyan
+  }
 }
 Write-Host ''
 Write-Host '   Admin token (for the Admin page):' -ForegroundColor White

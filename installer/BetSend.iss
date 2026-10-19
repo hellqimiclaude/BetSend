@@ -12,7 +12,7 @@
 #define AppPublisher  "BetSend"
 #define AppUrl        "https://github.com/hellqimiclaude/BetSend"
 #ifndef AppVersion
-  #define AppVersion "1.1.5"
+  #define AppVersion "1.1.6"
 #endif
 
 [Setup]
@@ -113,11 +113,30 @@ function BetSendUrl(Param: String): String;
 var
   Port: String;
 begin
+  { The shortcut on this machine, so localhost is right here. }
   Port := GetPort('');
   if Port = '80' then
     Result := 'http://localhost'
   else
     Result := 'http://localhost:' + Port;
+end;
+
+{
+  The address to hand to colleagues.
+
+  The computer name rather than the IP: this machine almost certainly gets
+  its address from DHCP, so the IP changes on a lease expiry or a reboot, and
+  every bookmark and desktop app in the building stops working at once.
+}
+function SharedUrl(Param: String): String;
+var
+  Port: String;
+begin
+  Port := GetPort('');
+  if Port = '80' then
+    Result := 'http://' + Lowercase(GetComputerNameString)
+  else
+    Result := 'http://' + Lowercase(GetComputerNameString) + ':' + Port;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -211,8 +230,11 @@ begin
   begin
     WizardForm.FinishedLabel.Caption :=
       'BetSend is running and will start again with Windows.' + #13#10 + #13#10 +
-      'Colleagues reach it at:  ' + BetSendUrl('') + #13#10 +
-      '(on their own machines, swap "localhost" for this computer''s name or IP)' + #13#10 + #13#10 +
+      'Colleagues reach it at:  ' + SharedUrl('') + #13#10 +
+      'On this machine:  ' + BetSendUrl('') + #13#10 + #13#10 +
+      'Hand round the name, not the IP address: this machine almost certainly' + #13#10 +
+      'gets its address from DHCP, and when that changes every bookmark in the' + #13#10 +
+      'building stops working at once.' + #13#10 + #13#10 +
       'Admin token:  ' + AdminToken + #13#10 +
       'It is also saved in config.json inside the installation folder.' + #13#10 + #13#10 +
       'Next: open BetSend, go to Admin, and paste in your staff list.';

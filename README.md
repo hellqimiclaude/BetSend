@@ -776,7 +776,19 @@ Set-NetConnectionProfile -Name "<the name it printed>" -NetworkCategory Private
 The installer warns about this now, but an install done before it did, or a
 network reclassified later, will not have been told.
 
-**The wrong address.** Find the real one on the server PC:
+**Hand round the computer name, not the IP address.** Almost every office PC
+gets its address from DHCP, so the IP changes on a lease expiry or a reboot —
+and when it does, every bookmark and every desktop app in the building stops
+working at once. The name resolves on a LAN and survives that:
+
+```powershell
+hostname        # use http://<that>:8080
+```
+
+Worth asking IT for a DHCP reservation as well, so the address does not move
+even if name resolution has a bad day.
+
+**The wrong address.** Find the IP on the server PC, if you need it:
 
 ```powershell
 ipconfig | Select-String IPv4

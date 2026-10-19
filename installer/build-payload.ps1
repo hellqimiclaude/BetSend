@@ -108,7 +108,7 @@ Copy-Item (Join-Path $RepoRoot 'README.md')     (Join-Path $Payload 'README.md')
 # install.ps1 reads the version floor from here, and the server resolves its
 # own paths relative to it.
 Write-JsonFile (Join-Path $Payload 'package.json') @{
-  name = 'betsend'; version = '1.1.5'; private = $true; type = 'module'
+  name = 'betsend'; version = '1.1.6'; private = $true; type = 'module'
 }
 
 Step 'Checking the payload actually runs'
