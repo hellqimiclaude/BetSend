@@ -38,10 +38,50 @@ describe('reading paths off the command line', () => {
     assert.deepEqual(pathsFromArgv(['C:\\BetSend.exe']), []);
   });
 
-  /** Which is what a registry entry that lost its "%1" would produce. */
-  test('--send with nothing after it is ignored, not treated as a path', () => {
+  /** A registry entry that lost its "%1": a switch and no positionals. */
+  test('--send with nothing to send is ignored', () => {
     assert.deepEqual(pathsFromArgv(['BetSend.exe', SEND_FLAG]), []);
     assert.deepEqual(pathsFromArgv(['BetSend.exe', SEND_FLAG, '--hidden']), []);
+  });
+
+  /**
+   * The command line as Chromium actually hands it over, copied from a real
+   * second instance. Switches gathered at the front, positionals at the end,
+   * so --send is nowhere near its path. The parser used to read the switch
+   * that followed, refuse it, and stage nothing -- the right-click menu
+   * appeared to do nothing at all.
+   */
+  test('the reordered command line Chromium really delivers', () => {
+    const argv = [
+      'C:\\Program Files\\BetSend\\BetSend.exe',
+      '--user-data-dir=C:\\Users\\sandro\\AppData\\Roaming\\BetSend',
+      '--send',
+      '--allow-file-access-from-files',
+      '.',
+      'C:\\Users\\sandro\\Documents\\report.pdf',
+    ];
+    assert.deepEqual(pathsFromArgv(argv), ['C:\\Users\\sandro\\Documents\\report.pdf']);
+  });
+
+  test('the attached form survives reordering, which is why it is used', () => {
+    const argv = [
+      'BetSend.exe',
+      `${SEND_FLAG}=C:\\report.pdf`,
+      '--allow-file-access-from-files',
+      '.',
+    ];
+    assert.deepEqual(pathsFromArgv(argv), ['C:\\report.pdf']);
+  });
+
+  test('several positionals after a bare --send are all files', () => {
+    const argv = ['BetSend.exe', '--send', '--some-switch', '.', 'a.txt', 'b.txt'];
+    assert.deepEqual(pathsFromArgv(argv), ['a.txt', 'b.txt']);
+  });
+
+  /** No --send at all means a normal launch, whatever else is on the line. */
+  test('positionals without --send are not files to send', () => {
+    assert.deepEqual(pathsFromArgv(['electron', '.', '--no-sandbox']), []);
+    assert.deepEqual(pathsFromArgv(['BetSend.exe', 'C:\\something.pdf']), []);
   });
 
   test('a path containing spaces survives, since argv is already split', () => {

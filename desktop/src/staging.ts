@@ -55,32 +55,64 @@ export const SEND_FLAG = '--send';
 /**
  * Pull the file paths out of a command line.
  *
- * Electron and Chromium add their own switches, and a dev run has a bare `.`
- * for the app directory, so this takes only what follows an explicit --send
- * rather than treating every non-switch argument as a file.
+ * Harder than it should be, because Chromium rewrites the command line before
+ * the app ever sees it. Launch BetSend with `--send C:\report.pdf` and what
+ * arrives is:
+ *
+ *     ["BetSend.exe", "--user-data-dir=...", "--send",
+ *      "--allow-file-access-from-files", ".", "C:\report.pdf"]
+ *
+ * Every switch has been gathered to the front and every positional argument
+ * pushed to the end, so `--send` and its path are no longer next to each
+ * other. Reading "the argument after --send" finds another switch, refuses
+ * it, and stages nothing -- which is precisely what happened: the right-click
+ * menu worked, the window came forward, and the file vanished.
+ *
+ * So: `--send=<path>` first, which survives the reordering because Chromium
+ * keeps a switch and its value together. Failing that, a bare `--send`
+ * switch means the paths are among the positional arguments at the end.
  */
 export function pathsFromArgv(argv: readonly string[]): string[] {
-  const paths: string[] = [];
+  const attached: string[] = [];
+  let sawBareSendSwitch = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === SEND_FLAG) {
-      const next = argv[i + 1];
-      // A bare --send at the end, or one followed by another switch, carries
-      // no path -- which happens if the registry entry loses its "%1".
-      if (next !== undefined && !next.startsWith('-')) {
-        paths.push(next);
-        i++;
-      }
-      continue;
-    }
+
     if (arg.startsWith(`${SEND_FLAG}=`)) {
       const value = arg.slice(SEND_FLAG.length + 1);
-      if (value) paths.push(value);
+      if (value) attached.push(value);
+      continue;
+    }
+
+    if (arg === SEND_FLAG) {
+      // Either the value follows directly (an unreordered command line) or
+      // it has been moved to the positionals.
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith('-')) {
+        attached.push(next);
+        i++;
+      } else {
+        sawBareSendSwitch = true;
+      }
     }
   }
 
-  return paths;
+  if (attached.length > 0) return attached;
+  if (!sawBareSendSwitch) return [];
+
+  return positionalArguments(argv);
+}
+
+/**
+ * The non-switch arguments, minus the things that are never files.
+ *
+ * argv[0] is the executable. "." is the app directory in a development run.
+ * Everything else at the tail of a reordered command line is what the user
+ * actually pointed at.
+ */
+function positionalArguments(argv: readonly string[]): string[] {
+  return argv.slice(1).filter((arg) => !arg.startsWith('-') && arg !== '.' && arg.length > 0);
 }
 
 let counter = 0;

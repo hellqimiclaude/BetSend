@@ -10,6 +10,7 @@ import { InboxView } from './views/InboxView';
 import { SentView } from './views/SentView';
 import { AdminView } from './views/AdminView';
 import { Button, ErrorState, LoadingState } from './components/ui';
+import { hostBridge } from './lib/host';
 import { IconBell, IconX } from './components/Icons';
 import { t } from './i18n';
 
@@ -66,6 +67,19 @@ export function App() {
     window.location.hash = `/${next}`;
     setView(next);
   }
+
+  /**
+   * Files arriving from Explorer's right-click menu land on the Send screen,
+   * so go there. Without this they stage correctly and are invisible to
+   * anybody who happened to be looking at their Inbox.
+   */
+  useEffect(() => {
+    const host = hostBridge();
+    if (!host || !user) return;
+    return host.onStagedChanged((files) => {
+      if (files.length > 0) navigate('send');
+    });
+  }, [user]);
 
   function goAuth(screen: AuthRoute['screen']) {
     window.location.hash = screen === 'signin' ? '/signin' : `/${screen}`;
