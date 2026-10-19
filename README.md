@@ -757,6 +757,36 @@ transfers are unaffected.
 That means the WebSocket dropped; the sidebar shows "Reconnecting to the server…" while it
 retries. A page refresh forces it.
 
+## When colleagues cannot reach it
+
+The server works on the machine it is installed on, and every other machine
+times out. Almost always one of two things.
+
+**Windows thinks the network is Public.** The installer opens the port for
+Private and Domain networks only — deliberately, since this is a LAN tool —
+and Windows classifies a network as Public whenever somebody declines network
+discovery. The rule then applies to nothing. Check and fix, as administrator
+on the server PC:
+
+```powershell
+Get-NetConnectionProfile | Format-List Name, NetworkCategory
+Set-NetConnectionProfile -Name "<the name it printed>" -NetworkCategory Private
+```
+
+The installer warns about this now, but an install done before it did, or a
+network reclassified later, will not have been told.
+
+**The wrong address.** Find the real one on the server PC:
+
+```powershell
+ipconfig | Select-String IPv4
+```
+
+To tell the two apart: a **refused** connection means the address is right and
+nothing is listening on that port; a **timeout** means the packets are being
+dropped, which is the firewall or the wrong machine entirely. The desktop app
+words its error to match.
+
 ## Backups
 
 The database holds the accounts, who sent what to whom and what has been

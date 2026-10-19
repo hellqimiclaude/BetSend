@@ -229,6 +229,28 @@ if (-not $NoService) {
                         -LocalPort $Port -Profile Private,Domain | Out-Null
     Write-Ok "TCP $Port allowed on private and domain networks"
     Write-Note 'Public networks are deliberately excluded -- this is a LAN-only tool.'
+
+    # The rule above does nothing if Windows has decided this network is
+    # Public, which is what it does whenever somebody declines network
+    # discovery. The result is a server that works perfectly on this machine
+    # and times out from every other one, with nothing anywhere saying why.
+    try {
+      $public = @(Get-NetConnectionProfile -ErrorAction Stop |
+                  Where-Object { $_.NetworkCategory -eq 'Public' })
+      if ($public.Count -gt 0) {
+        $names = ($public | ForEach-Object { $_.Name }) -join ', '
+        Write-Host ''
+        Write-Host '    Warning: Windows treats this network as Public.' -ForegroundColor Yellow
+        Write-Host "    The rule just added does not apply there, so colleagues will" -ForegroundColor Yellow
+        Write-Host "    see a connection that times out. Affected: $names" -ForegroundColor Yellow
+        Write-Host '' -ForegroundColor Yellow
+        Write-Host '    Fix it with (as administrator):' -ForegroundColor Yellow
+        Write-Host "      Set-NetConnectionProfile -Name '$($public[0].Name)' -NetworkCategory Private" -ForegroundColor Yellow
+        Write-Host ''
+      }
+    } catch {
+      # Older Windows, or no network profile to read. Not worth stopping for.
+    }
   } catch {
     Write-Host "    Could not add the firewall rule: $($_.Exception.Message)" -ForegroundColor Yellow
     Write-Host "    Add it by hand, or colleagues will not be able to connect." -ForegroundColor Yellow
