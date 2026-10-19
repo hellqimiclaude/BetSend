@@ -43,7 +43,7 @@ jobs:
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "Inno Setup is not on this runner at $iscc" }
-          & $iscc /DAppVersion=1.1.4 installer\BetSend.iss
+          & $iscc /DAppVersion=1.1.5 installer\BetSend.iss
           if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
           Get-ChildItem dist-installer
 
@@ -122,6 +122,50 @@ jobs:
           $page = Invoke-WebRequest -Uri "http://127.0.0.1:$($config.port)/" -UseBasicParsing
           if ($page.Content -notmatch 'BetSend') { throw 'the web interface did not load' }
           Write-Host 'the web interface loads'
+
+      # Installing over a running copy is the normal case after the first
+      # release, and it was broken: the server holds node.exe open and Setup
+      # stops with "DeleteFile failed; code 5. Access is denied." Nothing
+      # here installed twice, so nothing noticed.
+      - name: Upgrade over the running install
+        shell: powershell
+        run: |
+          $setup = (Get-ChildItem dist-installer -Filter '*.exe' | Select-Object -First 1).FullName
+          $app = "${env:ProgramFiles}\BetSend"
+
+          if (-not (Get-Process node -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Path -like "$app\*" })) {
+            throw 'BetSend is not running, so this would not test an upgrade at all'
+          }
+
+          $run = Start-Process -FilePath $setup `
+                   -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=upgrade.log' `
+                   -PassThru -Wait
+          if ($run.ExitCode -ne 0) {
+            Get-Content upgrade.log -Tail 60
+            throw "upgrading over a running install exited with $($run.ExitCode)"
+          }
+
+          # A locked file makes Setup skip it rather than fail outright under
+          # /VERYSILENT, so the exit code alone does not prove much.
+          $skipped = Select-String -Path upgrade.log -Pattern 'Access is denied|DeleteFile failed' -SimpleMatch
+          if ($skipped) {
+            $skipped | ForEach-Object { Write-Host $_.Line }
+            throw 'the upgrade could not replace files that were in use'
+          }
+
+          $config = Get-Content (Join-Path $app 'config.json') -Raw | ConvertFrom-Json
+          $up = $false
+          foreach ($attempt in 1..45) {
+            Start-Sleep -Seconds 1
+            try {
+              if ((Invoke-WebRequest -Uri "http://127.0.0.1:$($config.port)/api/health" -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200) {
+                $up = $true; break
+              }
+            } catch { }
+          }
+          if (-not $up) { throw 'BetSend did not come back after the upgrade' }
+          Write-Host 'upgraded over a running install, and it is serving again'
 
       - name: Uninstall cleanly
         shell: powershell

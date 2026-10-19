@@ -12,7 +12,7 @@
 #define AppPublisher  "BetSend"
 #define AppUrl        "https://github.com/hellqimiclaude/BetSend"
 #ifndef AppVersion
-  #define AppVersion "1.1.4"
+  #define AppVersion "1.1.5"
 #endif
 
 [Setup]
@@ -143,6 +143,45 @@ begin
       Result := False;
     end;
   end;
+end;
+
+{ --- upgrading over a running copy -------------------------------------- }
+
+{
+  Stop BetSend before replacing its files.
+
+  Without this, upgrading an installed copy fails on the first file it tries
+  to overwrite: the running server holds node.exe open, and Windows answers
+  "DeleteFile failed; code 5. Access is denied." with nothing to do about it
+  but cancel. Ending the scheduled task takes the supervisor and the node
+  process with it.
+}
+procedure StopBetSend();
+var
+  ResultCode: Integer;
+begin
+  { /f because the task may be mid-restart, and a prompt here would hang a
+    silent install. Failure is fine -- it usually means it was not running. }
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/end /tn "BetSend" /f', '',
+       SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  { Anything the task left behind. Matched on path, so a node process that
+    belongs to something else on this machine is left alone. }
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+       '-NoProfile -ExecutionPolicy Bypass -Command "Get-Process node -ErrorAction SilentlyContinue | ' +
+       'Where-Object { $_.Path -like ''' + ExpandConstant('{app}') + '\*'' } | Stop-Process -Force"',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  { Windows releases the file handle a moment after the process itself goes,
+    and replacing node.exe before then fails the same way. }
+  Sleep(1500);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  NeedsRestart := False;
+  StopBetSend();
+  Result := '';
 end;
 
 { --- finish page -------------------------------------------------------- }
