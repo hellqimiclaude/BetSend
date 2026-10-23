@@ -2,6 +2,7 @@
   "name": "betsend",
   "version": "1.0.0",
   "private": true,
+  "license": "UNLICENSED",
   "description": "BetSend \u2014 self-hosted LAN file transfer web app",
   "workspaces": [
     "server",

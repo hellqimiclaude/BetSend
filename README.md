@@ -1036,3 +1036,18 @@ Two things make it easier to live with:
 
 And the browser always works with no warning at all, so anybody who would
 rather not click through it does not have to.
+
+---
+
+## Licence
+
+Proprietary. Copyright © 2026 Sandro Gigauri, all rights reserved — see
+[LICENSE](LICENSE).
+
+The repository is public so that colleagues can read it, fetch a release and
+check a checksum without a GitHub account. That is not permission to use it:
+no licence is granted to copy, modify, deploy or build on this code. Ask if
+you want one.
+
+The third-party packages it depends on keep their own licences, which this
+does not touch. `npx license-checker --summary` lists them.

@@ -1,0 +1,31 @@
+Copyright (c) 2026 Sandro Gigauri. All rights reserved.
+
+This software and its source code are proprietary and confidential.
+
+The repository is readable on GitHub. That is not a licence. No permission is
+granted to any person to use, copy, modify, merge, publish, distribute,
+sublicense, sell, host, or create derivative works from this software or any
+part of it, whether in source or compiled form, and whether or not for
+commercial purposes.
+
+Viewing the source, and forking the repository as GitHub's interface permits,
+do not grant any of the rights withheld above.
+
+Permission may be granted in writing by the copyright holder. Requests should
+go to the repository owner. Where a separate written agreement between the
+copyright holder and another party covers this software, that agreement
+governs and this notice yields to it.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+---
+
+This software includes third-party open-source components, each under its own
+licence. Those licences cover those components and are unaffected by the terms
+above; nothing here restricts any right you hold under them. The full list is
+in package-lock.json, and `npx license-checker --summary` prints it.
