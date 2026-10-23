@@ -5,6 +5,8 @@ import { t } from '../i18n';
 import { classNames, formatBytes, formatEta } from '../lib/format';
 import { UploadBatch, type BatchProgress } from '../lib/uploader';
 import { useHostFiles } from '../lib/useHostFiles';
+import type { HostRoutes } from '../lib/host';
+import { RouteChooser } from '../components/RouteChooser';
 import { Button, Card, Chip, ProgressBar, SectionTitle } from '../components/ui';
 import { IconFile, IconPlus, IconSearch, IconUpload, IconX } from '../components/Icons';
 
@@ -25,6 +27,8 @@ export function SendView() {
   const [progress, setProgress] = useState<BatchProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  /** Set while the chooser is open, i.e. only when there is a choice to make. */
+  const [routes, setRoutes] = useState<HostRoutes | null>(null);
 
   /**
    * In the desktop app the files live in the app, not the page: a file the
@@ -176,20 +180,18 @@ export function SendView() {
     // The desktop app uploads and commits in one call: it is holding the
     // files, so there is nothing for this side to upload.
     if (host) {
-      setPhase('uploading');
-      const result = await host.send(selected, note);
-      setPhase('idle');
-      if (!result.ok) {
-        setError(result.error ?? 'The transfer could not be sent.');
+      /*
+       * Ask first only when the answer can differ. If nobody picked has
+       * BetSend open there is no direct route to choose, and a dialog
+       * whose outcome is fixed is just a click somebody has to make.
+       */
+      const available = host.routes ? await host.routes(selected).catch(() => null) : null;
+      if (available && available.reachable.length > 0) {
+        setRoutes(available);
         return;
       }
-      toast('success', t('send.success', { names: selected.join(', ') }));
-      setSelected([]);
-      setNote('');
-      setQuery('');
-      setError(null);
-      void refreshSent();
-      void refreshUsers();
+      if (available && available.unreachable.length > 0) setError(t('route.noneDirect'));
+      await sendByRoute('server');
       return;
     }
 
@@ -228,6 +230,27 @@ export function SendView() {
     }
   }
 
+  /** Hand the transfer to the desktop app and report how it went. */
+  async function sendByRoute(route: 'direct' | 'server') {
+    if (!host) return;
+    setRoutes(null);
+    setPhase('uploading');
+    const result = await host.send(selected, note, route);
+    setPhase('idle');
+
+    if (!result.ok) {
+      setError(result.error ?? 'The transfer could not be sent.');
+      return;
+    }
+    toast('success', t('send.success', { names: selected.join(', ') }));
+    setSelected([]);
+    setNote('');
+    setQuery('');
+    setError(null);
+    void refreshSent();
+    void refreshUsers();
+  }
+
   async function cancel() {
     if (host) {
       await host.cancel();
@@ -242,6 +265,14 @@ export function SendView() {
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+      {routes ? (
+        <RouteChooser
+          routes={routes}
+          recipients={selected}
+          onChoose={(route) => void sendByRoute(route)}
+          onCancel={() => setRoutes(null)}
+        />
+      ) : null}
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">{t('send.title')}</h1>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('send.offlineOk')}</p>

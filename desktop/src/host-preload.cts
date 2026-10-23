@@ -37,9 +37,19 @@ contextBridge.exposeInMainWorld('betsendHost', {
   unstage: (id: string): Promise<Staged[]> => ipcRenderer.invoke('host:unstage', id),
   clear: (): Promise<void> => ipcRenderer.invoke('host:clear'),
 
-  /** Uploads everything staged, then commits it as one transfer. */
-  send: (recipients: string[], note: string): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke('host:send', { recipients, note }),
+  /**
+   * Whether these people can take a transfer straight from this machine,
+   * and how long each route should take. No token is issued by asking.
+   */
+  routes: (recipients: string[]): Promise<unknown> => ipcRenderer.invoke('host:routes', { recipients }),
+
+  /** Sends everything staged, by the chosen route, as one transfer. */
+  send: (
+    recipients: string[],
+    note: string,
+    route?: 'direct' | 'server',
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('host:send', { recipients, note, route: route ?? 'server' }),
 
   cancel: (): Promise<void> => ipcRenderer.invoke('host:cancel'),
 

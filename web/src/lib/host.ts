@@ -26,13 +26,30 @@ export interface HostProgress {
   running: boolean;
 }
 
+/** What the chooser is drawn from: who is reachable, and how long each way takes. */
+export interface HostRoutes {
+  bytes: number;
+  /** Who could take a transfer straight from the sender's machine. */
+  reachable: string[];
+  unreachable: string[];
+  direct: { seconds: number | null; text: string };
+  server: { seconds: number | null; text: string };
+}
+
 export interface HostBridge {
   version: number;
   staged(): Promise<HostStagedFile[]>;
   stagePicked(files: File[]): Promise<{ files: HostStagedFile[]; skipped: { name: string; reason: string }[] }>;
   unstage(id: string): Promise<HostStagedFile[]>;
   clear(): Promise<void>;
-  send(recipients: string[], note: string): Promise<{ ok: boolean; error?: string }>;
+  /**
+   * Absent in an app older than peer transfers. Feature-detected rather
+   * than version-gated: the server and the desktop app are upgraded
+   * separately, and a new page talking to an older app should lose the
+   * chooser, not the ability to send.
+   */
+  routes?(recipients: string[]): Promise<HostRoutes>;
+  send(recipients: string[], note: string, route?: 'direct' | 'server'): Promise<{ ok: boolean; error?: string }>;
   cancel(): Promise<void>;
   onStagedChanged(callback: (files: HostStagedFile[]) => void): () => void;
   onProgress(callback: (progress: HostProgress) => void): () => void;

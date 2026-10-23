@@ -104,6 +104,17 @@ const en = {
   'send.tooBig': '{name} is larger than this server allows ({limit}).',
   'send.expiresIn': 'Recipients have {hours} hours to download.',
   'send.online': 'online',
+
+  'route.title': 'How should this go?',
+  'route.subtitle': '{size} to {names}.',
+  'route.direct': 'Straight to their PC',
+  'route.directBody': 'The file goes from your machine to theirs and is never stored anywhere else. Both of you have to stay on until it finishes.',
+  'route.server': 'Through the server',
+  'route.serverBody': 'The file waits on the server until they download it. You can close BetSend as soon as it has uploaded.',
+  'route.directPartial': 'Only {names} can take it this way right now; the rest go through the server.',
+  'route.noneDirect': 'Nobody you picked has BetSend open right now, so this goes through the server.',
+  'route.unknownTime': 'BetSend learns how long each route takes as you use it.',
+  'route.choose': 'Send',
   'send.offlineOk': 'People do not need to be online — files wait for them.',
 
   'inbox.title': 'Inbox',

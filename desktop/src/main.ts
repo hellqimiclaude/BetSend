@@ -21,6 +21,18 @@ import { checkResumable, clearPending, readPending, writePending, type PendingFi
 import { readSettings, writeSettings, type Settings } from './settings.js';
 import { LaunchCollector, pathsFromArgv } from './staging.js';
 import { HostUploadBatch, type BatchProgress } from './uploader.js';
+import { deliver, describeDelivery, type Route, type Timing } from './peer/deliver.js';
+import { PeerLink } from './peer/link.js';
+import { PeerReceiver } from './peer/receiver.js';
+import { sendDirect, type SendableFile } from './peer/sender.js';
+import {
+  describeSeconds,
+  estimateSeconds,
+  readHistory,
+  record,
+  writeHistory,
+  type History,
+} from './throughput.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
@@ -28,7 +40,22 @@ const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
 const PENDING_FILE = path.join(app.getPath('userData'), 'pending.json');
 /** Where tus records how far each file got. */
 const TUS_URLS_FILE = path.join(app.getPath('userData'), 'tus-urls.json');
+/** How fast each route has actually been, so estimates are measured. */
+const THROUGHPUT_FILE = path.join(app.getPath('userData'), 'throughput.json');
 const HEALTH_TIMEOUT_MS = 4000;
+
+/**
+ * The port this app listens on for transfers sent straight from a
+ * colleague's machine.
+ *
+ * Fixed rather than chosen by the OS, because the installer has to open it
+ * in Windows Firewall and a rule cannot name a port that changes every
+ * launch. If something else already has it the app takes whatever it can
+ * get and still works -- on a machine whose firewall lets it.
+ */
+const PEER_PORT = 7345;
+/** The server forgets an endpoint after two minutes, so say so more often. */
+const ANNOUNCE_EVERY_MS = 60_000;
 
 let settings: Settings = readSettings(SETTINGS_FILE);
 let mainWindow: BrowserWindow | null = null;
@@ -42,6 +69,11 @@ const outbox = new Outbox();
 let sending: HostUploadBatch | null = null;
 /** The latest progress, for the tray and for a window that opens mid-send. */
 let lastProgress: BatchProgress | null = null;
+
+/** Listening for transfers coming straight from another machine. */
+let receiver: PeerReceiver | null = null;
+let announcing: NodeJS.Timeout | null = null;
+let history: History = readHistory(THROUGHPUT_FILE);
 
 /**
  * Windows runs the shell verb once per selected file, so a multi-file
@@ -91,6 +123,7 @@ async function start(): Promise<void> {
   // After the window exists, so its notifications and progress have somewhere
   // to go.
   void resumePending();
+  void startListeningForPeers();
 }
 
 // Closing the last window is not quitting: the app sits in the tray so a
@@ -101,6 +134,9 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   quitting = true;
+  // Take the endpoint down rather than leaving colleagues' apps to try a
+  // machine that is no longer listening and wait for the timeout.
+  void stopListeningForPeers();
 });
 
 // --- settings ---------------------------------------------------------------
@@ -508,8 +544,57 @@ function registerHostIpc(): void {
    * The commit is the same call the web page makes; only the upload differs,
    * because only this process can read a file off the disk.
    */
+  /**
+   * What the chooser needs: whether the direct route is open to these
+   * people at all, and how long each route should take.
+   *
+   * The estimates come from transfers this app has actually done, so the
+   * first one of each kind says it does not know rather than making a
+   * number up.
+   */
+  ipcMain.handle('host:routes', async (_event, input: unknown) => {
+    const { recipients } = (input ?? {}) as { recipients?: unknown };
+    const to = Array.isArray(recipients) ? recipients.filter((r): r is string => typeof r === 'string') : [];
+    const bytes = outbox.files.reduce((sum, file) => sum + file.size, 0);
+
+    const estimates = {
+      direct: estimateSeconds(history, 'direct', bytes),
+      server: estimateSeconds(history, 'server', bytes),
+    };
+
+    const base = {
+      bytes,
+      direct: { seconds: estimates.direct, text: describeSeconds(estimates.direct) },
+      server: { seconds: estimates.server, text: describeSeconds(estimates.server) },
+    };
+
+    const origin = settings.serverUrl;
+    if (!origin || to.length === 0) return { ...base, reachable: [], unreachable: to };
+
+    const link = await linkFor(origin);
+    if (!link) return { ...base, reachable: [], unreachable: to };
+
+    // Asked one by one rather than through /api/peer/offer: an offer mints
+    // tokens, and merely opening a dialog should not hand anybody the
+    // right to connect to a colleague's machine.
+    const reachable: string[] = [];
+    const unreachable: string[] = [];
+    await Promise.all(
+      to.map(async (name) => {
+        if (await link.canTakeDirect(name)) reachable.push(name);
+        else unreachable.push(name);
+      }),
+    );
+
+    return { ...base, reachable, unreachable };
+  });
+
   ipcMain.handle('host:send', async (_event, input: unknown) => {
-    const { recipients, note } = (input ?? {}) as { recipients?: unknown; note?: unknown };
+    const { recipients, note, route } = (input ?? {}) as {
+      recipients?: unknown;
+      note?: unknown;
+      route?: unknown;
+    };
     const to = Array.isArray(recipients) ? recipients.filter((r): r is string => typeof r === 'string') : [];
 
     if (outbox.files.length === 0) return { ok: false, error: 'There are no files to send.' };
@@ -517,12 +602,106 @@ function registerHostIpc(): void {
     if (sending) return { ok: false, error: 'A transfer is already going.' };
 
     const files = [...outbox.files];
-    const result = await performSend(files, to, typeof note === 'string' ? note : '');
+    const result = await performSend(
+      files,
+      to,
+      typeof note === 'string' ? note : '',
+      route === 'direct' ? 'direct' : 'server',
+    );
     if (result.ok) {
       outbox.clear();
       publishStaged();
     }
     return result;
+  });
+}
+
+// --- transfers straight from another machine ---------------------------------
+
+/** Where files sent directly land. Beside Downloads, not inside it. */
+function inboxFolder(): string {
+  return path.join(app.getPath('downloads'), 'BetSend');
+}
+
+async function linkFor(origin: string): Promise<PeerLink | null> {
+  const cookie = await sessionCookieFor(origin);
+  return cookie ? new PeerLink(origin, cookie) : null;
+}
+
+/**
+ * Open a port, tell the server about it, and keep telling it.
+ *
+ * Nothing happens until somebody is signed in, because the token a sender
+ * presents can only be checked by asking the server as that user. Until
+ * then this machine is simply not available for direct transfers, and
+ * everything addressed to it goes the long way, which is correct.
+ */
+async function startListeningForPeers(): Promise<void> {
+  const origin = settings.serverUrl;
+  if (!origin || receiver) return;
+  const link = await linkFor(origin);
+  if (!link) return;
+
+  const peer = new PeerReceiver({
+    destination: inboxFolder(),
+    // Re-read the cookie per claim: a session that expired mid-afternoon
+    // must stop this machine accepting files, not keep using a stale one.
+    claim: async (token) => {
+      const current = settings.serverUrl ? await linkFor(settings.serverUrl) : null;
+      return current ? current.claim(token) : null;
+    },
+    complete: async (token, ok) => {
+      const current = settings.serverUrl ? await linkFor(settings.serverUrl) : null;
+      await current?.complete(token, ok).catch(() => undefined);
+    },
+    onFinished: (result) => announceArrival(result.from, result.files, result.note),
+    onFailed: (reason) => console.error('an incoming transfer failed:', reason),
+  });
+
+  let port: number;
+  try {
+    port = await peer.listen(PEER_PORT);
+  } catch {
+    // Something else has the port. Take any, and carry on: worst case the
+    // firewall rule does not cover it and senders fall back to the server.
+    try {
+      port = await peer.listen(0);
+    } catch (err) {
+      console.error('could not listen for direct transfers:', err);
+      return;
+    }
+  }
+
+  receiver = peer;
+  const say = async (): Promise<void> => {
+    const current = settings.serverUrl ? await linkFor(settings.serverUrl) : null;
+    await current?.announce(port).catch(() => undefined);
+  };
+
+  await say();
+  announcing = setInterval(() => void say(), ANNOUNCE_EVERY_MS);
+  // Not worth holding the process open for.
+  announcing.unref?.();
+}
+
+async function stopListeningForPeers(): Promise<void> {
+  if (announcing) clearInterval(announcing);
+  announcing = null;
+
+  const origin = settings.serverUrl;
+  if (origin) {
+    const link = await linkFor(origin).catch(() => null);
+    await link?.unannounce().catch(() => undefined);
+  }
+
+  await receiver?.close().catch(() => undefined);
+  receiver = null;
+}
+
+function announceArrival(from: string, files: string[], note: string): void {
+  const what = files.length === 1 ? files[0] : `${files.length} files`;
+  announce(`${what} from ${from}`, note || `Saved in ${inboxFolder()}.`, () => {
+    void shell.openPath(inboxFolder());
   });
 }
 
@@ -540,6 +719,7 @@ async function performSend(
   files: PendingFile[],
   recipients: string[],
   note: string,
+  route: Route,
 ): Promise<{ ok: boolean; error?: string }> {
   const origin = settings.serverUrl;
   if (!origin) return { ok: false, error: 'No server address is set.' };
@@ -547,34 +727,40 @@ async function performSend(
   const cookie = await sessionCookieFor(origin);
   if (!cookie) return { ok: false, error: 'You are not signed in. Open BetSend, sign in, and try again.' };
 
+  const link = new PeerLink(origin, cookie);
   writePending(PENDING_FILE, { files, recipients, note, startedAt: Date.now() });
 
-  const batch = new HostUploadBatch(files, {
-    origin,
-    cookie,
-    chunkSize: 8 * 1024 * 1024,
-    urlStoragePath: TUS_URLS_FILE,
-    onProgress: (progress) => {
-      lastProgress = progress;
-      mainWindow?.webContents.send('host:progress', progress);
-      mainWindow?.setProgressBar(progress.running ? progress.fraction : -1);
-      refreshTrayMenu();
-    },
-  });
-  sending = batch;
+  const sendable: SendableFile[] = files.map((file) => ({
+    path: file.path,
+    name: file.name,
+    size: file.size,
+  }));
 
   try {
-    const uploads = await batch.start();
-
-    const response = await fetch(`${origin.replace(/\/+$/, '')}/api/transfers`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', cookie },
-      body: JSON.stringify({ uploads, recipients, note }),
+    const report = await deliver({
+      route,
+      recipients,
+      files: sendable,
+      note,
+      offer: (to, list, text) => link.offer(to, list, text),
+      direct: (target, list) => sendStraightTo(target, list),
+      viaServer: (to, list, text) => {
+        /*
+         * Narrow the record before the server leg starts. If the app dies
+         * here, resuming must not send again to whoever already got the
+         * files straight from this machine.
+         */
+        writePending(PENDING_FILE, { files, recipients: to, note: text, startedAt: Date.now() });
+        return uploadAndCommit(origin, cookie, files, to, text);
+      },
+      onTiming: remember,
     });
 
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
-      const error = body?.error?.message ?? `The server refused the transfer (${response.status}).`;
+    const delivered = report.direct.length + report.viaServer.length;
+
+    if (delivered === 0) {
+      const error = report.failed[0]?.reason ?? 'The transfer did not go through.';
+      // The record stays: this is exactly the case resuming exists for.
       announce('BetSend could not send your files', error);
       return { ok: false, error };
     }
@@ -582,12 +768,16 @@ async function performSend(
     clearPending(PENDING_FILE);
     announce(
       files.length === 1 ? `${files[0].name} sent` : `${files.length} files sent`,
-      `Delivered to ${recipients.join(', ')}.`,
+      describeDelivery(report),
     );
+    // Partly delivered is not success: the page must not clear the files
+    // of somebody who still has one person to send to.
+    if (report.failed.length > 0) {
+      return { ok: false, error: describeDelivery(report) };
+    }
     return { ok: true };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    // The record stays: this is exactly the case resuming exists for.
     announce('BetSend could not send your files', error);
     return { ok: false, error };
   } finally {
@@ -595,6 +785,100 @@ async function performSend(
     lastProgress = null;
     mainWindow?.setProgressBar(-1);
     refreshTrayMenu();
+  }
+}
+
+/** Upload to the server and commit the transfer: the original path, unchanged. */
+async function uploadAndCommit(
+  origin: string,
+  cookie: string,
+  files: PendingFile[],
+  recipients: string[],
+  note: string,
+): Promise<Timing> {
+  const startedAt = Date.now();
+
+  const batch = new HostUploadBatch(files, {
+    origin,
+    cookie,
+    chunkSize: 8 * 1024 * 1024,
+    urlStoragePath: TUS_URLS_FILE,
+    onProgress: (progress) => showProgress(progress),
+  });
+  sending = batch;
+
+  const uploads = await batch.start();
+
+  const response = await fetch(`${origin.replace(/\/+$/, '')}/api/transfers`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ uploads, recipients, note }),
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+    throw new Error(body?.error?.message ?? `The server refused the transfer (${response.status}).`);
+  }
+
+  return { bytes: files.reduce((sum, file) => sum + file.size, 0), milliseconds: Date.now() - startedAt };
+}
+
+/**
+ * One direct transfer, reported on the same progress channel as an upload.
+ *
+ * The window and the tray should not have to know which route the bytes
+ * took; a progress bar that behaved differently depending on it would only
+ * be a way of leaking an implementation detail into somebody's afternoon.
+ */
+async function sendStraightTo(
+  target: { name: string; token: string; host: string; port: number },
+  files: readonly SendableFile[],
+): Promise<Timing> {
+  const total = files.reduce((sum, file) => sum + file.size, 0);
+
+  const result = await sendDirect({
+    host: target.host,
+    port: target.port,
+    token: target.token,
+    files,
+    onProgress: ({ name, totalSent }) => {
+      showProgress({
+        files: files.map((file) => ({
+          id: file.path,
+          name: file.name,
+          size: file.size,
+          bytesUploaded: file.name === name ? Math.min(file.size, totalSent) : 0,
+          status: 'uploading',
+          uploadId: null,
+        })),
+        bytesUploaded: totalSent,
+        bytesTotal: total,
+        fraction: total === 0 ? 1 : totalSent / total,
+        filesDone: 0,
+        running: true,
+      });
+    },
+  });
+
+  return { bytes: result.bytesSent, milliseconds: result.milliseconds };
+}
+
+function showProgress(progress: BatchProgress): void {
+  lastProgress = progress;
+  mainWindow?.webContents.send('host:progress', progress);
+  mainWindow?.setProgressBar(progress.running ? progress.fraction : -1);
+  refreshTrayMenu();
+}
+
+/** Remember how a finished leg went, so the next estimate is measured. */
+function remember(route: Route, timing: Timing): void {
+  const updated = record(history, route, timing);
+  if (updated === history) return;
+  history = updated;
+  try {
+    writeHistory(THROUGHPUT_FILE, history);
+  } catch {
+    /* an estimate the app forgets is worth nobody's attention */
   }
 }
 
@@ -640,7 +924,9 @@ async function resumePending(): Promise<void> {
   }
 
   announce('Carrying on with an earlier transfer', `${resumable.length} file(s) to ${pending.recipients.join(', ')}.`);
-  await performSend(resumable, pending.recipients, pending.note);
+  // Through the server, whichever route was chosen the first time: only
+  // the server path can pick a 10 GB file up from where it stopped.
+  await performSend(resumable, pending.recipients, pending.note, 'server');
 }
 
 /**
@@ -655,13 +941,18 @@ function watchForSignIn(): void {
   electronSession.defaultSession.cookies.on('changed', (_event, cookie, _cause, removed) => {
     if (removed || cookie.name !== COOKIE_NAME) return;
     void resumePending();
+    // Signing in is also the moment this machine can start taking direct
+    // transfers: before it, there is nobody to check a sender's token as.
+    void startListeningForPeers();
   });
 }
 
-function announce(title: string, body: string): void {
+function announce(title: string, body: string, onClick?: () => void): void {
   if (!Notification.isSupported()) return;
   try {
-    new Notification({ title, body, icon: path.join(here, 'icon.png') }).show();
+    const notification = new Notification({ title, body, icon: path.join(here, 'icon.png') });
+    if (onClick) notification.on('click', onClick);
+    notification.show();
   } catch {
     /* a notification failing is never worth interrupting a transfer over */
   }
