@@ -243,13 +243,19 @@ jobs:
           if ($command -notmatch '--send="%1"') { throw "the right-click command is wrong: $command" }
 
           # The runner is elevated, so the silent branch's netsh call applies.
-          $rule = netsh advfirewall firewall show rule name="BetSend direct transfers" 2>&1 | Out-String
+          # verbose, because the plain listing hides the Program line, and a
+          # rule that lost its program scoping would be an inbound allow for
+          # the entire machine while still looking perfectly fine here.
+          $rule = netsh advfirewall firewall show rule name="BetSend direct transfers" verbose 2>&1 | Out-String
           Write-Host $rule
           if ($rule -notmatch 'BetSend direct transfers') { throw 'the firewall rule was not added' }
           if ($rule -notmatch 'Profiles:.*Public') {
             throw 'the firewall rule does not cover every profile; an office LAN classified Public would block it'
           }
           if ($rule -notmatch 'Enabled:\s+Yes') { throw 'the firewall rule was added disabled' }
+          if ($rule -notmatch 'Program:.*BetSend\.exe') {
+            throw 'the rule is not scoped to BetSend.exe - it would allow inbound traffic to anything'
+          }
 
           # Adding it twice must not stack up duplicate rules.
           Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
