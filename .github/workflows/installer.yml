@@ -222,6 +222,41 @@ jobs:
           if ($setup.Length -lt 20MB) { throw "the desktop installer is only $([math]::Round($setup.Length/1MB,1)) MB - the runtime is missing" }
           Write-Host "desktop installer: $($setup.Name)"
 
+      # Building an installer proves only that electron-builder ran. This
+      # runs the thing: a silent install, then a look at what it actually did
+      # to the machine. The right-click verb and the firewall rule are both
+      # written by hand in installer.nsh, where a typo produces a perfectly
+      # valid installer that quietly does nothing.
+      - name: Install it and check what it changed
+        shell: powershell
+        run: |
+          $setup = Get-ChildItem dist-desktop -Filter '*.exe' | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
+          Write-Host "installed $($setup.Name)"
+
+          $verb = 'HKCU:\Software\Classes\*\shell\BetSend\command'
+          if (-not (Test-Path $verb)) { throw 'the Explorer right-click entry was not written' }
+          $command = (Get-ItemProperty $verb).'(default)'
+          Write-Host "right-click command: $command"
+          # --send="%1", attached. A space would be separated from its value
+          # by Chromium's own command-line rewriting before the app saw it.
+          if ($command -notmatch '--send="%1"') { throw "the right-click command is wrong: $command" }
+
+          # The runner is elevated, so the silent branch's netsh call applies.
+          $rule = netsh advfirewall firewall show rule name="BetSend direct transfers" 2>&1 | Out-String
+          Write-Host $rule
+          if ($rule -notmatch 'BetSend direct transfers') { throw 'the firewall rule was not added' }
+          if ($rule -notmatch 'Profiles:.*Public') {
+            throw 'the firewall rule does not cover every profile; an office LAN classified Public would block it'
+          }
+          if ($rule -notmatch 'Enabled:\s+Yes') { throw 'the firewall rule was added disabled' }
+
+          # Adding it twice must not stack up duplicate rules.
+          Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
+          $count = ([regex]::Matches((netsh advfirewall firewall show rule name="BetSend direct transfers" | Out-String), 'Rule Name:')).Count
+          if ($count -ne 1) { throw "reinstalling left $count copies of the firewall rule" }
+          Write-Host 'reinstall left exactly one rule'
+
       - uses: actions/upload-artifact@v4
         with:
           name: BetSend-Desktop

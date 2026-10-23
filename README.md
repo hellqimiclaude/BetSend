@@ -58,6 +58,9 @@ lost laptop can be signed out centrally.
   uploads with the same footprint as a 10 MB one.
 - **Bulk send without duplication** — sending one file to forty people uploads it once and
   stores exactly one copy on disk, referenced by each recipient.
+- **Straight to their PC** — between two people running the desktop app, files can go
+  machine to machine without touching the server at all. The server still brokers it,
+  but never sees a byte. See [Sending straight to someone's PC](#sending-straight-to-someones-pc).
 - **Live notifications** — a WebSocket pushes new transfers to recipients instantly: an
   in-app toast, an inbox badge, and (with permission) a desktop notification.
 - **Inbox** — sender, file names, sizes, note, timestamp and an expiry countdown. Download
@@ -898,6 +901,59 @@ Windows runs a shell verb once per selected file, so a thirty-file right-click
 launches the app thirty times. BetSend gathers those back into one transfer.
 Folders are refused rather than walked — a folder could be four files or forty
 thousand.
+
+### Sending straight to someone's PC
+
+Two people both running the desktop app can send files to each other directly:
+the bytes go from one machine to the other over the office network and are
+never stored on the server. On a gigabit LAN that is roughly twice as fast as
+uploading and downloading the same file, and nothing is left behind afterwards.
+
+When you press **Send**, the app asks which way to go and shows how long each
+should take:
+
+- **Straight to their PC** — never stored anywhere else, but both of you have
+  to stay on until it finishes.
+- **Through the server** — the file waits until they download it, and you can
+  close BetSend as soon as it has uploaded.
+
+The estimates are measured, not calculated. The app times each transfer it
+finishes and answers from what it has actually seen on your machine and your
+network; until it has done one of each it says *time unknown* rather than
+inventing a figure.
+
+**It only asks when there is a choice.** If nobody you picked has BetSend open,
+direct is not available and everything goes through the server, which the Send
+screen says in a line of text instead of a dialog.
+
+**Direct is a preference, not a condition.** Anyone the direct route cannot
+reach goes through the server instead — including anyone it reaches and then
+loses halfway through, because the file is still on your disk and sending it
+again costs time and nothing else. You are told which happened.
+
+#### What the server knows
+
+The server never holds the file on this path, but it is still what makes the
+transfer safe. It knows who is signed in and where each person's app is
+listening, and it issues a single-use token that the recipient's app checks
+with the server before accepting a byte. A machine that connects without one
+is hung up on, and even with one, only the files the server said were coming —
+at the sizes it said — are accepted.
+
+Addresses are read off the connection rather than taken from what a client
+claims about itself, so nobody can point a colleague's transfer somewhere else.
+
+#### The firewall rule
+
+Receiving this way means listening on a port, which Windows blocks by default.
+The installer offers to add a rule for it and warns you first that Windows is
+about to ask for administrator permission. The rule is scoped to the BetSend
+executable, not to a port number, and covers all three network profiles —
+a rule for Private and Domain alone does nothing on a network Windows has
+decided is Public, which an office LAN often is.
+
+Skipping it is a supported answer. BetSend still works; everything simply goes
+through the server.
 
 ### Uploads outlive the window
 
