@@ -582,7 +582,7 @@ npm test                      # everything
 npm run test:watch -w server  # re-run on save
 ```
 
-110 tests on Node's built-in runner — no test framework to install. Each run gets a
+389 tests on Node's built-in runner — no test framework to install. Each run gets a
 throwaway SQLite database in a temp directory, so there is nothing to set up and
 nothing to clean up.
 
@@ -594,11 +594,40 @@ nothing to clean up.
 | `sessions.test.ts`   | Expiry, revocation, and that neither cookies nor setup links are stored in the clear. |
 | `passwords.test.ts`  | Hash/verify round trips and the strength rules.                      |
 | `names.test.ts`      | `X.Lastname` parsing and staff-list import, including the CSV and CRLF a real paste contains. |
+| `peers.test.ts`      | The server brokering a direct transfer: who may claim a token, once, and that an endpoint's address is never handed to anyone without one. |
+| `peer.test.ts`       | The wire protocol over real sockets, from both ends — including what a port scanner, a wrong size, an unpromised file and a corrupted stream each get. |
+| `peer-link.test.ts`  | Two signed-in people and one real server: the token comes from the real broker, the file lands on a real disk, and the server's storage is checked afterwards to confirm it kept no copy. |
+| `deliver.test.ts`    | Which route each recipient gets, and the fallback to the server when the direct one fails before or during the transfer. |
+| `throughput.test.ts` | The measured estimates: the median, the floor under transfers too small to measure, and admitting it does not know yet. |
 
 The suite is checked by mutation: deliberately removing the upload authentication
 fails 6 tests, zeroing a reference count instead of decrementing it fails 1, and
-ignoring the delete-after-download setting fails 1. A suite that never goes red is
-not protecting anything, so it is worth re-checking that way after adding to it.
+ignoring the delete-after-download setting fails 1. Each of the peer security
+checks was removed in turn to confirm its own test goes red. A suite that never
+goes red is not protecting anything, so it is worth re-checking that way after
+adding to it.
+
+#### Driving the desktop app
+
+`main.ts` is the one file the suite above does not touch, and it is where the
+window, the tray, the IPC and the peer plumbing are wired together — a typo in a
+channel name typechecks perfectly and breaks the whole feature. There is a
+separate harness that starts the real app against a real server and clicks
+through it:
+
+```bash
+npm run build -w desktop
+xvfb-run -a node desktop/test/e2e/smoke.mjs   # Linux; drop xvfb-run elsewhere
+```
+
+It signs in, confirms the app opened a port and announced it, checks a
+right-clicked file is staged, opens the route chooser, chooses the direct route
+against a machine that hangs up, and confirms the transfer fell back to the
+server and arrived — then that the estimate it shows next time is measured
+rather than unknown.
+
+It is not part of `npm test`: it wants Playwright and, on Linux, an X server,
+neither of which is a dependency of this repository.
 
 Layout:
 
