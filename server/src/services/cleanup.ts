@@ -17,6 +17,7 @@ import { notifyTransferGone } from './notify.js';
 import { findById } from '../repos/users.js';
 import { purgeExpiredSessions } from './sessions.js';
 import { purgeStaleUploads } from '../repos/uploads.js';
+import { sweepPeers } from './peers.js';
 
 export interface SweepResult {
   expired: number;
@@ -64,6 +65,13 @@ export async function sweep(): Promise<SweepResult> {
     notifyTransferGone(id, 'expired', findById(transfer.sender_id)?.name ?? '', recipients);
     result.expired++;
   }
+
+  // 1b — peer endpoints and offers nobody used
+  //
+  // These live in memory and expire on their own when read, but a token
+  // that is never claimed would otherwise sit there until the process
+  // restarts. Housekeeping, not correctness.
+  sweepPeers();
 
   // 2 — everyone has it
   if (settings.deleteAfterAllDownloaded) {
