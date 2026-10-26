@@ -9,6 +9,7 @@ import {
   endpointFor,
   finishOffer,
   forgetEndpoint,
+  reachableFrom,
 } from '../services/peers.js';
 import { logEvent, recordDirectTransfer } from '../repos/transfers.js';
 import { getSettings } from '../services/settings.js';
@@ -64,7 +65,10 @@ export default async function peerRoutes(app: FastifyInstance): Promise<void> {
     const endpoint = endpointFor(target.id);
     // The address is not returned here. Only an offer hands that over, and
     // only to somebody who has just been given a token for it.
-    return { name: target.name, direct: endpoint !== null };
+    return {
+      name: target.name,
+      direct: endpoint !== null && reachableFrom(endpoint.host, clientIp(request)),
+    };
   });
 
   /**
@@ -109,7 +113,7 @@ export default async function peerRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const endpoint = endpointFor(target.id);
-      if (!endpoint) {
+      if (!endpoint || !reachableFrom(endpoint.host, clientIp(request))) {
         unreachable.push(target.name);
         continue;
       }

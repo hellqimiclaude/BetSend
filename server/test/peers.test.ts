@@ -422,3 +422,99 @@ describe('remembering a transfer that went straight to the other machine', () =>
     assert.deepEqual(unpurgedFinishedTransferIds(), []);
   });
 });
+
+/**
+ * An address is only worth handing out to somebody who can route to it.
+ *
+ * The endpoint host is whatever the server saw a connection come from, and
+ * for an app running on the server PC itself that is 127.0.0.1 -- correct
+ * for them, useless to anybody else.
+ */
+describe('not handing out an address the asker cannot reach', () => {
+  async function announceFrom(name: string, remoteAddress: string, port = 51234) {
+    return app.inject({
+      method: 'POST',
+      url: '/api/peer/announce',
+      headers: { cookie: await signIn(name) },
+      payload: { port },
+      remoteAddress,
+    });
+  }
+
+  async function lookFor(name: string, cookie: string, remoteAddress: string) {
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/peer/${name}`,
+      headers: { cookie },
+      remoteAddress,
+    });
+    return response.json().direct as boolean;
+  }
+
+  test('a colleague on the network is told the app on the server PC is unreachable', async () => {
+    await makeUser('J.Johnson');
+    await makeUser('M.Beridze');
+    const johnson = await signIn('J.Johnson');
+
+    // Beridze is signed in on the machine the server runs on.
+    await announceFrom('M.Beridze', '127.0.0.1');
+
+    assert.equal(await lookFor('M.Beridze', johnson, '10.2.254.239'), false);
+  });
+
+  test('and is given no token for them, so nothing waits on a dead connection', async () => {
+    await makeUser('J.Johnson');
+    await makeUser('M.Beridze');
+    const johnson = await signIn('J.Johnson');
+    await announceFrom('M.Beridze', '127.0.0.1');
+
+    const offer = await app.inject({
+      method: 'POST',
+      url: '/api/peer/offer',
+      headers: { cookie: johnson },
+      payload: { recipients: ['M.Beridze'], files: [{ name: 'a.bin', size: 1 }], note: '' },
+      remoteAddress: '10.2.254.239',
+    });
+
+    assert.deepEqual(offer.json().ready, []);
+    assert.deepEqual(offer.json().unreachable, ['M.Beridze']);
+  });
+
+  test('somebody else on that same machine still reaches them', async () => {
+    await makeUser('J.Johnson');
+    await makeUser('M.Beridze');
+    const johnson = await signIn('J.Johnson');
+    await announceFrom('M.Beridze', '127.0.0.1');
+
+    assert.equal(await lookFor('M.Beridze', johnson, '127.0.0.1'), true);
+  });
+
+  test('an ordinary LAN address is reachable from anywhere on the LAN', async () => {
+    await makeUser('J.Johnson');
+    await makeUser('M.Beridze');
+    const johnson = await signIn('J.Johnson');
+    await announceFrom('M.Beridze', '10.2.254.240');
+
+    assert.equal(await lookFor('M.Beridze', johnson, '10.2.254.239'), true);
+  });
+
+  test('an IPv4 address wearing an IPv6 prefix is the same address', async () => {
+    const { isLoopback, normaliseHost, reachableFrom } = await import('../src/services/peers.js');
+
+    assert.equal(normaliseHost('::ffff:10.2.254.239'), '10.2.254.239');
+    assert.equal(normaliseHost('10.2.254.239'), '10.2.254.239');
+    assert.equal(normaliseHost('::1'), '::1');
+
+    assert.equal(isLoopback('::ffff:127.0.0.1'), true);
+    assert.equal(isLoopback('::1'), true);
+    assert.equal(isLoopback('127.1.2.3'), true);
+    assert.equal(isLoopback('10.2.254.239'), false);
+    // Not loopback, whatever it looks like at a glance.
+    assert.equal(isLoopback('127.0.0.1.example.com'), false);
+    assert.equal(isLoopback('12.7.0.1'), false);
+
+    assert.equal(reachableFrom('::ffff:10.0.0.5', '10.0.0.6'), true);
+    assert.equal(reachableFrom('::ffff:127.0.0.1', '10.0.0.6'), false);
+    assert.equal(reachableFrom('::ffff:127.0.0.1', '::1'), true);
+  });
+});

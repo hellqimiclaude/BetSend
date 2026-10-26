@@ -582,7 +582,7 @@ npm test                      # everything
 npm run test:watch -w server  # re-run on save
 ```
 
-396 tests on Node's built-in runner — no test framework to install. Each run gets a
+401 tests on Node's built-in runner — no test framework to install. Each run gets a
 throwaway SQLite database in a temp directory, so there is nothing to set up and
 nothing to clean up.
 
@@ -989,6 +989,13 @@ at the sizes it said — are accepted.
 
 Addresses are read off the connection rather than taken from what a client
 claims about itself, so nobody can point a colleague's transfer somewhere else.
+
+An address is also only offered to somebody who can actually reach it. If you
+run the desktop app **on the server PC**, the server sees that app connect from
+`127.0.0.1` — correct for that machine, useless to anybody else. Colleagues are
+told you cannot take a direct transfer and go through the server straight away,
+rather than waiting out a connection to their own machine that was never going
+to work.
 
 #### The firewall rule
 
