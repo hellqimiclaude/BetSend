@@ -63,7 +63,13 @@ export function InboxView() {
 function InboxCard({ transfer, now }: { transfer: TransferView; now: number }) {
   const remaining = transfer.expiresAt - now;
   const soon = remaining < 6 * 3600_000;
-  const isNew = !transfer.me?.downloadedAt;
+  /*
+   * A direct transfer is downloaded by definition -- the bytes were on this
+   * machine's disk before the server was told about it -- so "new" has to
+   * mean unread here rather than not-yet-fetched.
+   */
+  const direct = transfer.delivery === 'direct';
+  const isNew = direct ? !transfer.me?.seenAt : !transfer.me?.downloadedAt;
 
   return (
     <Card className="p-4">
@@ -80,15 +86,19 @@ function InboxCard({ transfer, now }: { transfer: TransferView; now: number }) {
           </p>
         </div>
 
-        <span
-          className={classNames(
-            'inline-flex items-center gap-1.5 text-xs',
-            soon ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400',
-          )}
-        >
-          <IconClock className="h-3.5 w-3.5" />
-          {t('inbox.expiresIn', { time: formatDuration(remaining) })}
-        </span>
+        {direct ? (
+          <Badge tone="slate">{t('direct.badge')}</Badge>
+        ) : (
+          <span
+            className={classNames(
+              'inline-flex items-center gap-1.5 text-xs',
+              soon ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400',
+            )}
+          >
+            <IconClock className="h-3.5 w-3.5" />
+            {t('inbox.expiresIn', { time: formatDuration(remaining) })}
+          </span>
+        )}
       </div>
 
       {transfer.note ? (
@@ -105,18 +115,31 @@ function InboxCard({ transfer, now }: { transfer: TransferView; now: number }) {
             <span className="shrink-0 text-xs tabular-nums text-slate-500 dark:text-slate-400">
               {formatBytes(file.size)}
             </span>
-            <Button
-              variant="ghost"
-              className="shrink-0 px-2 py-1"
-              icon={<IconDownload className="h-4 w-4" />}
-              onClick={() => startDownload(`/api/transfers/${transfer.id}/files/${file.id}`)}
-            >
-              <span className="sr-only sm:not-sr-only">{t('inbox.download')}</span>
-            </Button>
+            {direct ? null : (
+              <Button
+                variant="ghost"
+                className="shrink-0 px-2 py-1"
+                icon={<IconDownload className="h-4 w-4" />}
+                onClick={() => startDownload(`/api/transfers/${transfer.id}/files/${file.id}`)}
+              >
+                <span className="sr-only sm:not-sr-only">{t('inbox.download')}</span>
+              </Button>
+            )}
           </li>
         ))}
       </ul>
 
+      {direct ? (
+        /*
+         * Where the files went, rather than a button that cannot work. The
+         * page is also served to browsers, where there is no desktop app to
+         * have put them anywhere, so the wording does not assume one is
+         * running now -- only that one was when they arrived.
+         */
+        <p className="mt-3 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+          {t('direct.inboxWhere', { name: transfer.sender.name })}
+        </p>
+      ) : (
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {transfer.files.length > 1 ? (
           <Button
@@ -141,6 +164,7 @@ function InboxCard({ transfer, now }: { transfer: TransferView; now: number }) {
           </span>
         ) : null}
       </div>
+      )}
     </Card>
   );
 }

@@ -115,6 +115,12 @@ const en = {
   'route.noneDirect': 'Nobody you picked has BetSend open right now, so this goes through the server.',
   'route.unknownTime': 'BetSend learns how long each route takes as you use it.',
   'route.choose': 'Send',
+
+  'direct.badge': 'Sent directly',
+  'direct.inboxWhere': 'These came straight from {name}\u2019s PC and are already saved in your BetSend folder.',
+  'direct.inboxNoApp': 'Saved by the BetSend desktop app, usually in Downloads\\BetSend.',
+  'direct.sentNote': 'Sent straight to their PC. Nothing was stored on the server, so there is nothing to cancel.',
+  'direct.noExpiry': 'Not stored here',
   'send.offlineOk': 'People do not need to be online — files wait for them.',
 
   'inbox.title': 'Inbox',

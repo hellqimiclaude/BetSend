@@ -58,6 +58,12 @@ function migrate(db: DB): void {
   db.exec(
     'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email_key) WHERE email_key IS NOT NULL',
   );
+
+  // Everything already in a database that predates peer transfers went
+  // through the server, which is exactly what the default says.
+  if (!columns('transfers').has('delivery')) {
+    db.exec("ALTER TABLE transfers ADD COLUMN delivery TEXT NOT NULL DEFAULT 'server'");
+  }
 }
 
 export function closeDb(): void {

@@ -10,7 +10,9 @@ import {
   finishOffer,
   forgetEndpoint,
 } from '../services/peers.js';
-import { logEvent } from '../repos/transfers.js';
+import { logEvent, recordDirectTransfer } from '../repos/transfers.js';
+import { getSettings } from '../services/settings.js';
+import { notifyDirectArrival } from '../services/notify.js';
 
 /**
  * Brokering transfers that go straight from one machine to another.
@@ -159,12 +161,39 @@ export default async function peerRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const delivered = body.ok !== false;
+
+    if (!delivered) {
+      logEvent('transfer.direct_failed', null, offer.senderId, `to ${offer.recipientName}`);
+      return { ok: true };
+    }
+
+    /*
+     * Written here and nowhere earlier. An offer that was made and then not
+     * used -- the sender changed their mind, or the connection died and it
+     * fell back to the server -- must leave no record of a delivery that did
+     * not happen. By this point the recipient's own app has the bytes on
+     * disk and is saying so.
+     *
+     * Without this the feature has a hole somebody would find within a day:
+     * send a file directly and it appears in neither Sent nor Inbox, because
+     * nothing on this server ever learned it existed.
+     */
+    const transfer = recordDirectTransfer({
+      senderId: offer.senderId,
+      recipientId: offer.recipientId,
+      files: offer.files,
+      note: offer.note || null,
+      retentionHours: getSettings().retentionHours,
+    });
+
     logEvent(
-      delivered ? 'transfer.direct_delivered' : 'transfer.direct_failed',
-      null,
+      'transfer.direct_delivered',
+      transfer.id,
       offer.senderId,
       `${offer.files.length} file(s) to ${offer.recipientName}`,
     );
+    notifyDirectArrival(transfer, offer.senderName);
+
     return { ok: true };
   });
 }

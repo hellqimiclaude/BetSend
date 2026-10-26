@@ -257,3 +257,168 @@ describe('claiming an offer', () => {
     assert.equal(response.statusCode, 403);
   });
 });
+
+/**
+ * The bytes bypass this server, but the fact that they moved must not.
+ *
+ * Without a record, a file sent directly appears in neither the sender's
+ * Sent page nor the recipient's Inbox -- it simply happens and is forgotten,
+ * which is indistinguishable from the feature being broken.
+ */
+describe('remembering a transfer that went straight to the other machine', () => {
+  async function deliver(
+    recipient = 'M.Beridze',
+    files = [{ name: 'report.pdf', size: 1024 }],
+    note = 'read this',
+  ) {
+    await makeUser('J.Johnson');
+    await makeUser(recipient);
+    const johnson = await signIn('J.Johnson');
+    const theirs = await signIn(recipient);
+    await announce(theirs, 51234);
+
+    const offer = await app.inject({
+      method: 'POST',
+      url: '/api/peer/offer',
+      headers: { cookie: johnson },
+      payload: { recipients: [recipient], files, note },
+    });
+    const { token } = offer.json().ready[0] as { token: string };
+
+    await app.inject({ method: 'POST', url: '/api/peer/claim', headers: { cookie: theirs }, payload: { token } });
+    const done = await app.inject({
+      method: 'POST',
+      url: '/api/peer/complete',
+      headers: { cookie: theirs },
+      payload: { token, ok: true },
+    });
+    assert.equal(done.statusCode, 200, done.body);
+    return { johnson, theirs };
+  }
+
+  test('the sender sees it on their Sent page', async () => {
+    const { johnson } = await deliver();
+
+    const sent = await app.inject({ method: 'GET', url: '/api/sent', headers: { cookie: johnson } });
+    const [transfer] = sent.json().transfers;
+
+    assert.equal(transfer.delivery, 'direct');
+    assert.equal(transfer.fileCount, 1);
+    assert.equal(transfer.totalSize, 1024);
+    assert.deepEqual(
+      transfer.files.map((f: { name: string; size: number }) => f),
+      [{ id: transfer.files[0].id, name: 'report.pdf', size: 1024, mime: null }],
+    );
+    assert.equal(transfer.recipients[0].name, 'M.Beridze');
+  });
+
+  test('the recipient sees it in their Inbox, unread', async () => {
+    const { theirs } = await deliver();
+
+    const inbox = await app.inject({ method: 'GET', url: '/api/inbox', headers: { cookie: theirs } });
+    const [transfer] = inbox.json().transfers;
+
+    assert.equal(transfer.delivery, 'direct');
+    assert.equal(transfer.sender.name, 'J.Johnson');
+    assert.equal(transfer.note, 'read this');
+    // They have the bytes already; what they have not done is look at the app.
+    assert.equal(transfer.me.downloadedAt !== null, true);
+    assert.equal(transfer.me.seenAt, null);
+
+    const unread = await app.inject({ method: 'GET', url: '/api/unread', headers: { cookie: theirs } });
+    assert.equal(unread.json().unread, 1);
+  });
+
+  test('a transfer still going is not recorded as delivered', async () => {
+    await makeUser('J.Johnson');
+    await makeUser('M.Beridze');
+    const johnson = await signIn('J.Johnson');
+    await announce(await signIn('M.Beridze'), 51234);
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/peer/offer',
+      headers: { cookie: johnson },
+      payload: { recipients: ['M.Beridze'], files: [{ name: 'report.pdf', size: 1024 }], note: '' },
+    });
+
+    const sent = await app.inject({ method: 'GET', url: '/api/sent', headers: { cookie: johnson } });
+    assert.deepEqual(sent.json().transfers, [], 'an offer that was never used is not a delivery');
+  });
+
+  /** It fell back to the server, which will record its own transfer. */
+  test('a direct attempt that failed is not recorded as delivered', async () => {
+    await makeUser('J.Johnson');
+    await makeUser('M.Beridze');
+    const johnson = await signIn('J.Johnson');
+    const theirs = await signIn('M.Beridze');
+    await announce(theirs, 51234);
+
+    const offer = await app.inject({
+      method: 'POST',
+      url: '/api/peer/offer',
+      headers: { cookie: johnson },
+      payload: { recipients: ['M.Beridze'], files: [{ name: 'report.pdf', size: 1024 }], note: '' },
+    });
+    const { token } = offer.json().ready[0] as { token: string };
+    await app.inject({ method: 'POST', url: '/api/peer/claim', headers: { cookie: theirs }, payload: { token } });
+    await app.inject({
+      method: 'POST',
+      url: '/api/peer/complete',
+      headers: { cookie: theirs },
+      payload: { token, ok: false },
+    });
+
+    const sent = await app.inject({ method: 'GET', url: '/api/sent', headers: { cookie: johnson } });
+    assert.deepEqual(sent.json().transfers, []);
+  });
+
+  test('every file is listed, in the order it was sent', async () => {
+    const { johnson } = await deliver('M.Beridze', [
+      { name: 'a.bin', size: 10 },
+      { name: 'b.bin', size: 20 },
+      { name: 'c.bin', size: 30 },
+    ]);
+
+    const sent = await app.inject({ method: 'GET', url: '/api/sent', headers: { cookie: johnson } });
+    const [transfer] = sent.json().transfers;
+
+    assert.deepEqual(
+      transfer.files.map((f: { name: string }) => f.name),
+      ['a.bin', 'b.bin', 'c.bin'],
+    );
+    assert.equal(transfer.totalSize, 60);
+  });
+
+  /**
+   * There is nothing on this server to pull back. Revoking must say so
+   * rather than appearing to work.
+   */
+  test('it cannot be revoked, because there is nothing here to revoke', async () => {
+    const { johnson } = await deliver();
+    const sent = await app.inject({ method: 'GET', url: '/api/sent', headers: { cookie: johnson } });
+    const { id } = sent.json().transfers[0] as { id: string };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/transfers/${id}/revoke`,
+      headers: { cookie: johnson },
+    });
+    assert.equal(response.statusCode, 400);
+  });
+
+  /**
+   * The sweeper frees blobs. These rows hold none, and a bug that let one
+   * through would have it releasing references that were never taken.
+   */
+  test('the retention sweeper has nothing to do with it', async () => {
+    await deliver();
+    const { expiredTransferIds, fullyDownloadedTransferIds, unpurgedFinishedTransferIds } = await import(
+      '../src/repos/transfers.js'
+    );
+
+    assert.deepEqual(expiredTransferIds(), []);
+    assert.deepEqual(fullyDownloadedTransferIds(), []);
+    assert.deepEqual(unpurgedFinishedTransferIds(), []);
+  });
+});

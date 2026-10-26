@@ -76,7 +76,26 @@ CREATE TABLE IF NOT EXISTS transfers (
   state      TEXT    NOT NULL DEFAULT 'active', -- 'active'|'revoked'|'expired'|'completed'|'deleted'
   total_size INTEGER NOT NULL DEFAULT 0,
   file_count INTEGER NOT NULL DEFAULT 0,
-  purged_at  INTEGER                            -- set once its blob refs were released
+  purged_at  INTEGER,                           -- set once its blob refs were released
+  -- 'server' means the bytes passed through here and a blob exists for each
+  -- file. 'direct' means they went machine to machine and this row is only a
+  -- record that it happened -- there is nothing on disk to download, release
+  -- or sweep.
+  delivery   TEXT    NOT NULL DEFAULT 'server'  -- 'server'|'direct'
+);
+
+-- The file list of a direct transfer.
+--
+-- It cannot live in transfer_files, because that references blobs and a
+-- direct transfer never produced one. Keeping it in its own table is also
+-- what guarantees the retention sweeper can never see these rows as
+-- something holding bytes: there is no path from here to a blob at all.
+CREATE TABLE IF NOT EXISTS direct_files (
+  transfer_id TEXT    NOT NULL REFERENCES transfers(id) ON DELETE CASCADE,
+  ordinal     INTEGER NOT NULL,
+  name        TEXT    NOT NULL,
+  size        INTEGER NOT NULL,
+  PRIMARY KEY (transfer_id, ordinal)
 );
 
 CREATE TABLE IF NOT EXISTS transfer_files (

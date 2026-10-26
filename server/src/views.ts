@@ -1,6 +1,8 @@
 import {
+  directFilesFor,
   filesFor,
   recipientsFor,
+  type DirectFileRow,
   type TransferRow,
   type TransferFileRow,
   type RecipientRow,
@@ -31,6 +33,11 @@ export interface TransferView {
   createdAt: number;
   expiresAt: number;
   state: TransferRow['state'];
+  /**
+   * 'direct' means the files went machine to machine. There is nothing on
+   * this server to download, so the page must not offer to.
+   */
+  delivery: TransferRow['delivery'];
   totalSize: number;
   fileCount: number;
   sender: { name: string; online: boolean };
@@ -78,6 +85,14 @@ function toFileView(row: TransferFileRow): FileView {
   return { id: row.blob_id, name: row.original_name, size: row.size, mime: row.mime };
 }
 
+/**
+ * The id is deliberately not a blob id, because there is no blob. It exists
+ * only so the list has stable keys; nothing can be fetched with it.
+ */
+function toDirectFileView(row: DirectFileRow): FileView {
+  return { id: `direct:${row.transfer_id}:${row.ordinal}`, name: row.name, size: row.size, mime: null };
+}
+
 function toRecipientView(row: RecipientRow): RecipientView {
   return {
     name: row.name,
@@ -102,6 +117,11 @@ export function buildTransferViews(rows: TransferRow[], options: BuildOptions = 
   const files = groupBy(filesFor(ids));
   const recipients = options.includeRecipients ? groupBy(recipientsFor(ids)) : null;
 
+  // Only queried when there is something to query for, so the ordinary
+  // server-only case costs nothing.
+  const directIds = rows.filter((r) => r.delivery === 'direct').map((r) => r.id);
+  const directFiles = directIds.length > 0 ? groupBy(directFilesFor(directIds)) : null;
+
   return rows.map((row) => {
     const senderName = options.senderName ? options.senderName(row) : '';
     const view: TransferView = {
@@ -110,10 +130,14 @@ export function buildTransferViews(rows: TransferRow[], options: BuildOptions = 
       createdAt: row.created_at,
       expiresAt: row.expires_at,
       state: row.state,
+      delivery: row.delivery,
       totalSize: row.total_size,
       fileCount: row.file_count,
       sender: { name: senderName, online: senderName ? isOnline(senderName) : false },
-      files: (files.get(row.id) ?? []).map(toFileView),
+      files:
+        row.delivery === 'direct'
+          ? (directFiles?.get(row.id) ?? []).map(toDirectFileView)
+          : (files.get(row.id) ?? []).map(toFileView),
     };
     if (recipients) view.recipients = (recipients.get(row.id) ?? []).map(toRecipientView);
     if (options.mine) view.me = options.mine(row);

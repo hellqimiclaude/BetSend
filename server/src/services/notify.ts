@@ -62,6 +62,29 @@ export function notifyNewTransfer(transfer: TransferRow, senderName: string): vo
   );
 }
 
+/**
+ * A transfer that arrived without passing through here.
+ *
+ * The websocket push only, never the email. The email exists to tell
+ * somebody that files are waiting for them to come and fetch; these files
+ * are already on their disk, and their own app has told them so. Sending
+ * "you have files waiting" about something they already have would send
+ * them looking for a download that does not exist.
+ */
+export function notifyDirectArrival(transfer: TransferRow, senderName: string): void {
+  for (const userId of recipientUserIds(transfer.id)) {
+    sendToUserId(userId, {
+      type: 'transfer:new',
+      transferId: transfer.id,
+      from: senderName,
+      fileCount: transfer.file_count,
+      totalSize: transfer.total_size,
+      note: transfer.note,
+      unread: unreadCount(userId),
+    });
+  }
+}
+
 export function notifyTransferGone(
   transferId: string,
   kind: 'revoked' | 'expired',

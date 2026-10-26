@@ -64,6 +64,10 @@ export function SentView() {
 }
 
 function stateBadge(transfer: TransferView) {
+  // A direct transfer is always 'completed', so the state badge would say
+  // nothing useful. What it went by is the more interesting fact.
+  if (transfer.delivery === 'direct') return <Badge tone="slate">{t('direct.badge')}</Badge>;
+
   switch (transfer.state) {
     case 'revoked':
       return <Badge tone="red">{t('sent.stateRevoked')}</Badge>;
@@ -89,6 +93,7 @@ function SentCard({
   const done = recipients.filter((recipient) => recipient.downloadedAt).length;
   const remaining = transfer.expiresAt - now;
   const live = transfer.state === 'active';
+  const direct = transfer.delivery === 'direct';
 
   return (
     <Card className="p-4">
@@ -182,6 +187,14 @@ function SentCard({
           </li>
         ))}
       </ul>
+
+      {direct ? (
+        // Said plainly, because the missing Cancel button is otherwise the
+        // kind of absence somebody reports as a bug.
+        <p className="mt-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+          {t('direct.sentNote')}
+        </p>
+      ) : null}
     </Card>
   );
 }

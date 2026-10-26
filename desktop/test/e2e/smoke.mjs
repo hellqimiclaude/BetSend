@@ -263,9 +263,113 @@ measured.direct.seconds === null
   ? ok('the direct estimate is still unknown, because no direct transfer finished')
   : fail('it invented a direct estimate from a server transfer');
 
+listener.close();
+
+// 7. A direct transfer that actually works, end to end.
+//    Johnson is now a real BetSend receiver -- the same code the desktop app
+//    runs -- checking the token with the real server before accepting a byte.
+const { PeerReceiver } = await import(path.join(repoRoot, 'desktop/dist/peer/receiver.js'));
+const { PeerLink } = await import(path.join(repoRoot, 'desktop/dist/peer/link.js'));
+
+const johnsonLink = new PeerLink(origin, adminCookie);
+const johnsonInbox = path.join(work, 'johnson-inbox');
+const johnsonApp = new PeerReceiver({
+  destination: johnsonInbox,
+  claim: (token) => johnsonLink.claim(token),
+  complete: (token, okFlag) => johnsonLink.complete(token, okFlag),
+});
+const johnsonPeerPort = await johnsonApp.listen(0);
+await johnsonLink.announce(johnsonPeerPort);
+
+// Stage a second file the way Explorer does: another launch of the same app,
+// which the running instance picks up and gathers.
+const second = path.join(work, 'contract.pdf');
+fs.writeFileSync(second, crypto.randomBytes(3 * 1024 * 1024));
+const relaunchLog = fs.openSync(path.join(work, 'relaunch.log'), 'w');
+spawn(path.join(repoRoot, 'node_modules/electron/dist/electron'), [
+  path.join(repoRoot, 'desktop/dist/main.js'),
+  // Only because this container runs as root; Windows needs nothing of the
+  // sort, and Playwright passes it to the first app for the same reason.
+  '--no-sandbox',
+  `--user-data-dir=${userData}`,
+  `--send=${second}`,
+], { stdio: ['ignore', relaunchLog, relaunchLog], detached: false });
+
+let restaged = [];
+for (let i = 0; i < 60; i++) {
+  restaged = await page.evaluate(() => window.betsendHost?.staged?.() ?? []);
+  if (restaged.length > 0) break;
+  await new Promise((r) => setTimeout(r, 500));
+}
+restaged.length === 1 && restaged[0].name === 'contract.pdf'
+  ? ok('a second right-click reaches the running app')
+  : fail('the second launch staged nothing', fs.readFileSync(path.join(work, 'relaunch.log'), 'utf8').slice(0, 800) || '(the second process printed nothing)');
+
+if (restaged.length === 0) {
+  await app.close();
+  server.kill();
+  process.exit(1);
+}
+
+await page.getByText('J.Johnson', { exact: false }).first().click();
+await page.getByRole('button', { name: /^Send$/ }).last().click();
+const dialog2 = page.getByRole('dialog');
+await dialog2.waitFor({ timeout: 10000 });
+await dialog2.getByText('Straight to their PC').click();
+await dialog2.getByRole('button', { name: /^Send$/ }).click();
+
+let landed = false;
+for (let i = 0; i < 120; i++) {
+  if (fs.existsSync(path.join(johnsonInbox, 'contract.pdf'))) { landed = true; break; }
+  await new Promise((r) => setTimeout(r, 250));
+}
+landed
+  ? ok('the file arrived on the other machine')
+  : fail('the direct transfer never landed', JSON.stringify(fs.existsSync(johnsonInbox) ? fs.readdirSync(johnsonInbox) : 'no folder'));
+
+if (landed) {
+  const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+  sha(path.join(johnsonInbox, 'contract.pdf')) === sha(second)
+    ? ok('byte for byte')
+    : fail('the file that arrived is not the file that was sent');
+}
+
+// 8. The server never saw the bytes, but it did record that it happened.
+let sentRow = null;
+for (let i = 0; i < 40; i++) {
+  const r = await fetch(`${origin}/api/sent`, { headers: { cookie: kellyCookie } });
+  if (r.ok) {
+    sentRow = (await r.json()).transfers.find((tr) => tr.delivery === 'direct') ?? null;
+    if (sentRow) break;
+  }
+  await new Promise((r) => setTimeout(r, 250));
+}
+sentRow
+  ? ok('it shows on the sender\u2019s Sent page, marked as direct')
+  : fail('a direct transfer left no trace on the Sent page');
+if (sentRow) {
+  sentRow.files.length === 1 && sentRow.files[0].name === 'contract.pdf' && sentRow.totalSize === 3 * 1024 * 1024
+    ? ok('with the right file and size')
+    : fail('the recorded file list is wrong', JSON.stringify(sentRow.files));
+}
+
+const johnsonInboxRows = await (await fetch(`${origin}/api/inbox`, { headers: { cookie: adminCookie } })).json();
+const arrival = johnsonInboxRows.transfers.find((tr) => tr.delivery === 'direct');
+arrival && arrival.sender.name === 'K.Kelly'
+  ? ok('and in the recipient\u2019s Inbox, from the right person')
+  : fail('the recipient has no record of it', JSON.stringify(johnsonInboxRows.transfers));
+
+// 9. Nothing was stored. The whole point.
+const stored = fs.readdirSync(path.join(work, 'data'), { recursive: true }).map(String);
+stored.some((f) => f.includes('contract'))
+  ? fail('the server kept a copy of a file it only brokered')
+  : ok('the server kept no copy of it');
+
+await johnsonApp.close();
+await johnsonLink.unannounce();
+
 if (crashes.length) fail('the page threw', crashes.join('\n      '));
 
-listener.close();
 await app.close();
 server.kill();
 console.log('done');

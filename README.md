@@ -582,7 +582,7 @@ npm test                      # everything
 npm run test:watch -w server  # re-run on save
 ```
 
-389 tests on Node's built-in runner — no test framework to install. Each run gets a
+396 tests on Node's built-in runner — no test framework to install. Each run gets a
 throwaway SQLite database in a temp directory, so there is nothing to set up and
 nothing to clean up.
 
@@ -594,7 +594,7 @@ nothing to clean up.
 | `sessions.test.ts`   | Expiry, revocation, and that neither cookies nor setup links are stored in the clear. |
 | `passwords.test.ts`  | Hash/verify round trips and the strength rules.                      |
 | `names.test.ts`      | `X.Lastname` parsing and staff-list import, including the CSV and CRLF a real paste contains. |
-| `peers.test.ts`      | The server brokering a direct transfer: who may claim a token, once, and that an endpoint's address is never handed to anyone without one. |
+| `peers.test.ts`      | The server brokering a direct transfer: who may claim a token, once, that an endpoint's address is never handed to anyone without one, and that a delivery which happened is recorded while one that did not is not. |
 | `peer.test.ts`       | The wire protocol over real sockets, from both ends — including what a port scanner, a wrong size, an unpromised file and a corrupted stream each get. |
 | `peer-link.test.ts`  | Two signed-in people and one real server: the token comes from the real broker, the file lands on a real disk, and the server's storage is checked afterwards to confirm it kept no copy. |
 | `deliver.test.ts`    | Which route each recipient gets, and the fallback to the server when the direct one fails before or during the transfer. |
@@ -620,11 +620,16 @@ npm run build -w desktop
 xvfb-run -a node desktop/test/e2e/smoke.mjs   # Linux; drop xvfb-run elsewhere
 ```
 
-It signs in, confirms the app opened a port and announced it, checks a
-right-clicked file is staged, opens the route chooser, chooses the direct route
-against a machine that hangs up, and confirms the transfer fell back to the
-server and arrived — then that the estimate it shows next time is measured
-rather than unknown.
+Nineteen checks. It signs in, confirms the app opened a port and announced it,
+checks a right-clicked file is staged, opens the route chooser, chooses the
+direct route against a machine that hangs up, and confirms the transfer fell
+back to the server and arrived — then that the estimate it shows next time is
+measured rather than unknown.
+
+Then it does it properly: a second right-click into the running app, a real
+BetSend receiver on the other end checking the token with the real server, and
+a file that arrives byte for byte, appears on the sender's Sent page and in the
+recipient's Inbox, and leaves no copy in the server's storage.
 
 It is not part of `npm test`: it wants Playwright and, on Linux, an X server,
 neither of which is a dependency of this repository.
@@ -959,6 +964,19 @@ screen says in a line of text instead of a dialog.
 reach goes through the server instead — including anyone it reaches and then
 loses halfway through, because the file is still on your disk and sending it
 again costs time and nothing else. You are told which happened.
+
+#### What it looks like afterwards
+
+A direct transfer still appears on the sender's **Sent** page and in the
+recipient's **Inbox**, marked *Sent directly*. The record is written when the
+recipient's app confirms the files arrived, never before — an offer that was
+made and then not used leaves no trace of a delivery that did not happen.
+
+There is nothing to download from those entries and nothing to cancel, because
+there is nothing on the server: the Inbox says where the files were saved
+instead, and the Sent card says why the Cancel button is missing. The record
+ages out of the Inbox on the same retention policy a stored transfer would
+have had.
 
 #### What the server knows
 

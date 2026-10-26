@@ -50,6 +50,11 @@ export interface TransferView {
   createdAt: number;
   expiresAt: number;
   state: TransferState;
+  /**
+   * 'direct' means the files went machine to machine and never touched the
+   * server, so there is nothing here to download or pull back.
+   */
+  delivery: 'server' | 'direct';
   totalSize: number;
   fileCount: number;
   sender: { name: string; online: boolean };

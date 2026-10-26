@@ -12,6 +12,15 @@ export interface TransferRow {
   total_size: number;
   file_count: number;
   purged_at: number | null;
+  delivery: 'server' | 'direct';
+}
+
+/** A file that went machine to machine, so there is no blob behind it. */
+export interface DirectFileRow {
+  transfer_id: string;
+  ordinal: number;
+  name: string;
+  size: number;
 }
 
 export interface TransferFileRow {
@@ -119,6 +128,74 @@ export function createTransfer(input: CreateTransferInput): TransferRow {
   return getTransfer(id)!;
 }
 
+export interface RecordDirectInput {
+  senderId: number;
+  recipientId: number;
+  files: { name: string; size: number }[];
+  note: string | null;
+  retentionHours: number;
+}
+
+/**
+ * Write down a transfer that went straight from one machine to another.
+ *
+ * Called once the recipient's app confirms the files arrived, never before:
+ * an offer that was made and then not used -- the sender changed their mind,
+ * or the connection failed and it fell back to the server -- must not leave
+ * a record of something that did not happen.
+ *
+ * One row per recipient, unlike a server transfer which has one row and many.
+ * That is not an oversight: these really were separate deliveries, made one
+ * at a time, each of which could fail on its own, and pretending otherwise
+ * would mean showing a single transfer as sent when only half of it was.
+ *
+ * The row is born finished. It is `completed` and already purged, so every
+ * query the retention sweeper runs steps over it -- which is correct, because
+ * there are no bytes here to free. `expires_at` still means something though:
+ * it is when this stops appearing in the recipient's inbox, so a record of a
+ * file does not outlive the policy that would have governed the file itself.
+ */
+export function recordDirectTransfer(input: RecordDirectInput): TransferRow {
+  const db = getDb();
+  const id = newId(12);
+  const ts = now();
+  const totalSize = input.files.reduce((sum, file) => sum + file.size, 0);
+
+  const run = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO transfers
+         (id, sender_id, note, created_at, expires_at, state, total_size, file_count, purged_at, delivery)
+       VALUES (?, ?, ?, ?, ?, 'completed', ?, ?, ?, 'direct')`,
+    ).run(
+      id,
+      input.senderId,
+      input.note,
+      ts,
+      ts + Math.max(1, input.retentionHours) * 3600_000,
+      totalSize,
+      input.files.length,
+      ts,
+    );
+
+    const addFile = db.prepare(
+      'INSERT INTO direct_files (transfer_id, ordinal, name, size) VALUES (?, ?, ?, ?)',
+    );
+    input.files.forEach((file, index) => addFile.run(id, index, file.name, file.size));
+
+    // Downloaded, because the bytes were on the recipient's disk before this
+    // row existed. Unseen, though: the desktop notification is easy to miss,
+    // and the inbox badge is how somebody finds out they were sent something
+    // while they were away from their desk.
+    db.prepare(
+      `INSERT INTO recipients (transfer_id, user_id, seen_at, downloaded_at, download_count)
+       VALUES (?, ?, NULL, ?, 1)`,
+    ).run(id, input.recipientId, ts);
+  });
+
+  run();
+  return getTransfer(id)!;
+}
+
 export function getTransfer(id: string): TransferRow | undefined {
   return getDb().prepare('SELECT * FROM transfers WHERE id = ?').get(id) as TransferRow | undefined;
 }
@@ -141,6 +218,19 @@ export function filesFor(transferIds: string[]): TransferFileRow[] {
           ORDER BY tf.transfer_id, tf.ordinal`,
       )
       .all(...batch) as TransferFileRow[],
+  );
+}
+
+export function directFilesFor(transferIds: string[]): DirectFileRow[] {
+  return inBatches(transferIds, (batch) =>
+    getDb()
+      .prepare(
+        `SELECT transfer_id, ordinal, name, size
+           FROM direct_files
+          WHERE transfer_id IN (${placeholders(batch.length)})
+          ORDER BY transfer_id, ordinal`,
+      )
+      .all(...batch) as DirectFileRow[],
   );
 }
 
@@ -180,11 +270,19 @@ export function inboxFor(userId: number): (TransferRow & {
          JOIN transfers t ON t.id = r.transfer_id
          JOIN users u     ON u.id = t.sender_id
         WHERE r.user_id = ?
-          AND t.state = 'active'
-          AND t.purged_at IS NULL
+          AND (
+            (t.state = 'active' AND t.purged_at IS NULL)
+            -- A direct transfer is born completed and purged, because there
+            -- is nothing on this server to keep. It still belongs in the
+            -- inbox: the files are on the recipient's own disk and a record
+            -- of what arrived, from whom, is the only trace left once the
+            -- notification is gone. It ages out on the same policy a stored
+            -- transfer would have.
+            OR (t.delivery = 'direct' AND t.expires_at > ?)
+          )
         ORDER BY t.created_at DESC`,
     )
-    .all(userId) as never;
+    .all(userId, now()) as never;
 }
 
 export function sentBy(userId: number): TransferRow[] {
@@ -204,9 +302,14 @@ export function unreadCount(userId: number): number {
       `SELECT COUNT(*) AS n
          FROM recipients r
          JOIN transfers t ON t.id = r.transfer_id
-        WHERE r.user_id = ? AND r.seen_at IS NULL AND t.state = 'active' AND t.purged_at IS NULL`,
+        WHERE r.user_id = ?
+          AND r.seen_at IS NULL
+          AND (
+            (t.state = 'active' AND t.purged_at IS NULL)
+            OR (t.delivery = 'direct' AND t.expires_at > ?)
+          )`,
     )
-    .get(userId) as { n: number };
+    .get(userId, now()) as { n: number };
   return row.n;
 }
 
