@@ -40,7 +40,11 @@ function makeFile(name: string, bytes: number): SendableFile {
 /** A receiver whose "ask the server" step is stubbed. */
 async function startReceiver(
   claim: (token: string) => Promise<ClaimResult | null>,
-  hooks: { onFailed?: (reason: string) => void; onFinished?: (r: { files: string[] }) => void } = {},
+  hooks: {
+    onFailed?: (reason: string) => void;
+    onFinished?: (r: { files: string[] }) => void;
+    onProgress?: (p: { from: string; name: string; received: number; total: number }) => void;
+  } = {},
 ): Promise<number> {
   const completed: { token: string; ok: boolean }[] = [];
   receiver = new PeerReceiver({
@@ -112,6 +116,28 @@ describe('sending a file straight to another machine', () => {
 
     assert.ok(seen.length > 1, 'expected several progress reports');
     assert.equal(seen[seen.length - 1], file.size);
+  });
+
+  /**
+   * The receiving end has no page to report to: nobody asked for this file
+   * and there may be no window open. Without progress out here, a four
+   * gigabyte transfer is several silent minutes and then a notification.
+   */
+  test('the recipient is told how far along an arriving file is', async () => {
+    const file = makeFile('big.bin', 4 * 1024 * 1024);
+    const seen: { name: string; received: number; total: number; from: string }[] = [];
+    const port = await startReceiver(claimFor([file]), { onProgress: (p) => seen.push(p) });
+
+    await sendDirect({ host: '127.0.0.1', port, token: GOOD_TOKEN, files: [file] });
+
+    assert.ok(seen.length > 1, 'expected progress as it arrived, not once at the end');
+    assert.equal(seen[seen.length - 1].received, file.size);
+    assert.equal(seen[0].total, file.size);
+    assert.equal(seen[0].name, 'big.bin');
+    // Who it is from, so the tray can say so without a second lookup.
+    assert.equal(seen[0].from, 'J.Johnson');
+    // Never more than was promised, or a percentage would read over 100.
+    assert.ok(seen.every((p) => p.received <= p.total));
   });
 
   test('an existing file is not overwritten', async () => {

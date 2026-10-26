@@ -72,6 +72,8 @@ let lastProgress: BatchProgress | null = null;
 
 /** Listening for transfers coming straight from another machine. */
 let receiver: PeerReceiver | null = null;
+/** What is arriving right now, for the tray. Null when nothing is. */
+let incoming: { from: string; name: string; received: number; total: number } | null = null;
 let announcing: NodeJS.Timeout | null = null;
 let history: History = readHistory(THROUGHPUT_FILE);
 
@@ -388,7 +390,19 @@ function refreshTrayMenu(): void {
   const percent = busy ? Math.floor((lastProgress?.fraction ?? 0) * 100) : 0;
   const remaining = busy ? (lastProgress?.files.length ?? 0) - (lastProgress?.filesDone ?? 0) : 0;
 
-  tray.setToolTip(busy ? `BetSend — sending, ${percent}%` : 'BetSend');
+  // A file arriving straight from a colleague has no page to report to --
+  // the recipient did not ask for anything and may have no window open --
+  // so without this a four-gigabyte transfer is several silent minutes
+  // followed by a notification.
+  const arriving = incoming ? percentOf(incoming.received, incoming.total) : 0;
+
+  tray.setToolTip(
+    busy
+      ? `BetSend — sending, ${percent}%`
+      : incoming
+        ? `BetSend — receiving ${incoming.name}, ${arriving}%`
+        : 'BetSend',
+  );
 
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -396,6 +410,15 @@ function refreshTrayMenu(): void {
         ? ([
             { label: `Sending ${remaining} file(s) — ${percent}%`, enabled: false },
             { label: 'Cancel transfer', click: () => void sending?.cancel() },
+            { type: 'separator' },
+          ] as Electron.MenuItemConstructorOptions[])
+        : []),
+      ...(incoming
+        ? ([
+            {
+              label: `Receiving ${incoming.name} from ${incoming.from} — ${arriving}%`,
+              enabled: false,
+            },
             { type: 'separator' },
           ] as Electron.MenuItemConstructorOptions[])
         : []),
@@ -654,8 +677,23 @@ async function startListeningForPeers(): Promise<void> {
       const current = settings.serverUrl ? await linkFor(settings.serverUrl) : null;
       await current?.complete(token, ok).catch(() => undefined);
     },
-    onFinished: (result) => announceArrival(result.from, result.files, result.note),
-    onFailed: (reason) => console.error('an incoming transfer failed:', reason),
+    onProgress: (progress) => {
+      incoming = progress;
+      refreshTrayMenu();
+    },
+    onFinished: (result) => {
+      incoming = null;
+      refreshTrayMenu();
+      announceArrival(result.from, result.files, result.note);
+    },
+    onFailed: (reason) => {
+      // Clearing this matters more than the log line: a tray stuck at
+      // "receiving 60%" for the rest of the afternoon is worse than no
+      // indicator at all.
+      incoming = null;
+      refreshTrayMenu();
+      console.error('an incoming transfer failed:', reason);
+    },
   });
 
   let port: number;
@@ -696,6 +734,12 @@ async function stopListeningForPeers(): Promise<void> {
 
   await receiver?.close().catch(() => undefined);
   receiver = null;
+}
+
+/** Whole percent, and never a division by zero on an empty file. */
+function percentOf(done: number, total: number): number {
+  if (!(total > 0)) return 100;
+  return Math.min(100, Math.floor((done / total) * 100));
 }
 
 function announceArrival(from: string, files: string[], note: string): void {

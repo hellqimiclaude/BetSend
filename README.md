@@ -582,7 +582,7 @@ npm test                      # everything
 npm run test:watch -w server  # re-run on save
 ```
 
-401 tests on Node's built-in runner — no test framework to install. Each run gets a
+402 tests on Node's built-in runner — no test framework to install. Each run gets a
 throwaway SQLite database in a temp directory, so there is nothing to set up and
 nothing to clean up.
 
@@ -959,6 +959,11 @@ inventing a figure.
 **It only asks when there is a choice.** If nobody you picked has BetSend open,
 direct is not available and everything goes through the server, which the Send
 screen says in a line of text instead of a dialog.
+
+**The recipient can see it arriving.** Their tray shows the file name, who it
+is from and how far along it is — they did not ask for the transfer and may
+have no window open, so without that a four-gigabyte file is several silent
+minutes followed by a notification.
 
 **Direct is a preference, not a condition.** Anyone the direct route cannot
 reach goes through the server instead — including anyone it reaches and then
