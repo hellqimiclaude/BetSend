@@ -12,7 +12,7 @@
 #define AppPublisher  "BetSend"
 #define AppUrl        "https://github.com/hellqimiclaude/BetSend"
 #ifndef AppVersion
-  #define AppVersion "1.2.0"
+  #define AppVersion "1.2.1"
 #endif
 
 [Setup]
