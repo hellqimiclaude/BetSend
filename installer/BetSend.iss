@@ -12,7 +12,7 @@
 #define AppPublisher  "BetSend"
 #define AppUrl        "https://github.com/hellqimiclaude/BetSend"
 #ifndef AppVersion
-  #define AppVersion "1.4.1"
+  #define AppVersion "1.4.2"
 #endif
 
 [Setup]
@@ -191,9 +191,19 @@ var
   ScriptPath: String;
   Script: String;
 begin
-  { /f because the task may be mid-restart, and a prompt here would hang a
-    silent install. Failure is fine -- it usually means it was not running. }
-  Exec(ExpandConstant('{sys}\schtasks.exe'), '/end /tn "BetSend" /f', '',
+  {
+    No /f. It is valid for /create and /delete and not for /end, which
+    rejects the whole command with "Invalid argument/option" -- so this
+    call has never once ended the task since it was written. Nothing
+    noticed because the result is deliberately ignored, on the grounds that
+    a failure here usually just means it was not running. It usually did
+    not mean that.
+
+    The result is still ignored, for the original reason, but the command
+    now works. /end does not prompt, so there was nothing for /f to
+    suppress in the first place.
+  }
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/end /tn "BetSend"', '',
        SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
   {

@@ -43,7 +43,7 @@ jobs:
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "Inno Setup is not on this runner at $iscc" }
-          & $iscc /DAppVersion=1.4.1 installer\BetSend.iss
+          & $iscc /DAppVersion=1.4.2 installer\BetSend.iss
           if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
           Get-ChildItem dist-installer
 
@@ -184,8 +184,12 @@ jobs:
 
           # Take the task out of the picture entirely, so nothing but the
           # hand-started process is holding anything.
-          schtasks /end /tn BetSend /f 2>&1 | Out-Null
-          schtasks /change /tn BetSend /disable 2>&1 | Out-Null
+          # Through cmd so that a native command writing to stderr does not
+          # become a terminating error -- the shell here runs with
+          # $ErrorActionPreference = 'stop'. And no /f: schtasks /end does
+          # not take it, which is the bug this whole step exists to catch.
+          cmd /c "schtasks /end /tn BetSend >nul 2>&1"
+          cmd /c "schtasks /change /tn BetSend /disable >nul 2>&1"
           Start-Sleep -Seconds 3
           Get-Process node -ErrorAction SilentlyContinue |
             Where-Object { $_.Path -like "$app\*" } | Stop-Process -Force
@@ -233,7 +237,7 @@ jobs:
           }
           Write-Host 'the hand-started server was closed and the upgrade went through'
 
-          schtasks /change /tn BetSend /enable 2>&1 | Out-Null
+          cmd /c "schtasks /change /tn BetSend /enable >nul 2>&1"
 
       - name: Uninstall cleanly
         shell: powershell
