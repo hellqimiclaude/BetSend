@@ -43,7 +43,7 @@ jobs:
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "Inno Setup is not on this runner at $iscc" }
-          & $iscc /DAppVersion=1.4.0 installer\BetSend.iss
+          & $iscc /DAppVersion=1.4.1 installer\BetSend.iss
           if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
           Get-ChildItem dist-installer
 
@@ -166,6 +166,74 @@ jobs:
           }
           if (-not $up) { throw 'BetSend did not come back after the upgrade' }
           Write-Host 'upgraded over a running install, and it is serving again'
+
+      # The case the step above does not cover, and the one that actually
+      # went wrong on a real machine: a server nobody's scheduled task owns.
+      #
+      # Somebody setting this up runs it from a command prompt to watch the
+      # log, or leaves a debugging session open. That process holds
+      # better-sqlite3's native module exactly as the task's would, but it
+      # is not the task, so ending the task does not touch it and the
+      # upgrade dies on "DeleteFile failed; code 5".
+      - name: Upgrade over a server somebody started by hand
+        shell: powershell
+        run: |
+          $setup = (Get-ChildItem dist-installer -Filter '*.exe' | Select-Object -First 1).FullName
+          $app = "${env:ProgramFiles}\BetSend"
+          $native = Join-Path $app 'node_modules\better-sqlite3\prebuilds\win32-x64.node'
+
+          # Take the task out of the picture entirely, so nothing but the
+          # hand-started process is holding anything.
+          schtasks /end /tn BetSend /f 2>&1 | Out-Null
+          schtasks /change /tn BetSend /disable 2>&1 | Out-Null
+          Start-Sleep -Seconds 3
+          Get-Process node -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -like "$app\*" } | Stop-Process -Force
+          Start-Sleep -Seconds 2
+
+          $config = Get-Content (Join-Path $app 'config.json') -Raw | ConvertFrom-Json
+          $byHand = Start-Process -FilePath (Join-Path $app 'node\node.exe') `
+                      -ArgumentList (Join-Path $app 'server\dist\index.js') `
+                      -WorkingDirectory $app -PassThru -WindowStyle Hidden
+          Write-Host "started one by hand as pid $($byHand.Id)"
+
+          $up = $false
+          foreach ($attempt in 1..45) {
+            Start-Sleep -Seconds 1
+            try {
+              if ((Invoke-WebRequest -Uri "http://127.0.0.1:$($config.port)/api/health" -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200) {
+                $up = $true; break
+              }
+            } catch { }
+          }
+          if (-not $up) {
+            Write-Host 'the hand-started server never answered, so this proves nothing'
+            throw 'could not set up the hand-started case'
+          }
+
+          $before = (Get-FileHash $native).Hash
+          $run = Start-Process -FilePath $setup `
+                   -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=byhand.log' `
+                   -PassThru -Wait
+          if ($run.ExitCode -ne 0) {
+            Get-Content byhand.log -Tail 60
+            throw "the upgrade exited with $($run.ExitCode)"
+          }
+
+          $locked = Select-String -Path byhand.log -Pattern 'Access is denied|DeleteFile failed' -SimpleMatch
+          if ($locked) {
+            $locked | ForEach-Object { Write-Host $_.Line }
+            throw 'a hand-started server stopped the upgrade replacing files in use'
+          }
+          if (-not (Test-Path $native)) { throw 'the native module is gone after the upgrade' }
+          Write-Host "better-sqlite3 before=$before after=$((Get-FileHash $native).Hash)"
+
+          if (-not $byHand.HasExited) {
+            throw 'the hand-started server was left running, so nothing was actually replaced'
+          }
+          Write-Host 'the hand-started server was closed and the upgrade went through'
+
+          schtasks /change /tn BetSend /enable 2>&1 | Out-Null
 
       - name: Uninstall cleanly
         shell: powershell

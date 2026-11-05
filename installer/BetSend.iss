@@ -12,7 +12,7 @@
 #define AppPublisher  "BetSend"
 #define AppUrl        "https://github.com/hellqimiclaude/BetSend"
 #ifndef AppVersion
-  #define AppVersion "1.4.0"
+  #define AppVersion "1.4.1"
 #endif
 
 [Setup]
@@ -39,6 +39,16 @@ ArchitecturesInstallIn64BitMode=x64
 UninstallDisplayIcon={app}\node\node.exe
 UninstallDisplayName={#AppName}
 SetupLogging=yes
+; Ask Windows which processes hold the files about to be replaced, and close
+; them. The code below stops BetSend the tidy way first, but it can only stop
+; what it recognises -- a server somebody started by hand from a command
+; prompt, or one running under a different account, is not something a name
+; match reliably finds. Restart Manager does not guess: it asks the kernel
+; who has the handle. Without this the first locked file ends the upgrade
+; with "DeleteFile failed; code 5" and a dialog offering only to cancel.
+CloseApplications=force
+; Our own [Run] step starts BetSend again, so Setup must not also try.
+RestartApplications=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -178,22 +188,68 @@ end;
 procedure StopBetSend();
 var
   ResultCode: Integer;
+  ScriptPath: String;
+  Script: String;
 begin
   { /f because the task may be mid-restart, and a prompt here would hang a
     silent install. Failure is fine -- it usually means it was not running. }
   Exec(ExpandConstant('{sys}\schtasks.exe'), '/end /tn "BetSend" /f', '',
        SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
-  { Anything the task left behind. Matched on path, so a node process that
-    belongs to something else on this machine is left alone. }
-  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-       '-NoProfile -ExecutionPolicy Bypass -Command "Get-Process node -ErrorAction SilentlyContinue | ' +
-       'Where-Object { $_.Path -like ''' + ExpandConstant('{app}') + '\*'' } | Stop-Process -Force"',
-       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  {
+    Then anything the task did not own.
 
-  { Windows releases the file handle a moment after the process itself goes,
-    and replacing node.exe before then fails the same way. }
-  Sleep(1500);
+    Written to a file and run with -File rather than passed as -Command.
+    The quoting otherwise has to survive Pascal, then CreateProcess, then
+    PowerShell, and a script that is subtly mangled by one of them still
+    exits zero -- which reads as "nothing was running" and leaves the file
+    locked. A file has one layer of quoting instead of three.
+  }
+  ScriptPath := ExpandConstant('{tmp}\stop-betsend.ps1');
+
+  {
+    The path arrives as a parameter rather than being pasted into the
+    script. AddQuotes only adds quotes when a string contains spaces, so
+    embedding it would write `$app = C:\BetSend` for anybody who installed
+    somewhere without a space in it -- a PowerShell syntax error, in a
+    hidden window, reported as nothing at all.
+  }
+  Script :=
+    'param([Parameter(Mandatory = $true)][string] $app)' + #13#10 +
+    { Win32_Process, not Get-Process: reading .Path on a process owned by
+      another account can fail outright, and a Where-Object filtering on a
+      property that threw matches nothing at all -- indistinguishable from
+      there being nothing to stop. }
+    'function Find-BetSend {' + #13#10 +
+    '  Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |' + #13#10 +
+    '    Where-Object { $_.Name -eq ''node.exe'' } |' + #13#10 +
+    {  The command line as well as the executable. The server does not have
+       to have been started by us: somebody running it from a command prompt
+       to watch the log, with a Node of their own, holds better-sqlite3 open
+       exactly the same way. That is the case that actually went wrong. }
+    '    Where-Object {' + #13#10 +
+    '      ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($app, ''OrdinalIgnoreCase'')) -or' + #13#10 +
+    '      ($_.CommandLine -and $_.CommandLine.ToLower().Contains($app.ToLower()))' + #13#10 +
+    '    }' + #13#10 +
+    '}' + #13#10 +
+    'Find-BetSend | ForEach-Object {' + #13#10 +
+    '  Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue' + #13#10 +
+    '}' + #13#10 +
+    { Wait for them to actually go, rather than guessing with a sleep that
+      is too long on a good day and too short on the day it matters. }
+    'for ($i = 0; $i -lt 40; $i++) {' + #13#10 +
+    '  if (-not (Find-BetSend)) { break }' + #13#10 +
+    '  Start-Sleep -Milliseconds 250' + #13#10 +
+    '}' + #13#10;
+
+  if SaveStringToFile(ScriptPath, Script, False) then
+    Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+         '-NoProfile -ExecutionPolicy Bypass -File ' + AddQuotes(ScriptPath) +
+         ' -app ' + AddQuotes(ExpandConstant('{app}')),
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  { The handle outlives the process by a moment even once it has gone. }
+  Sleep(1000);
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
