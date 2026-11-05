@@ -14,6 +14,7 @@ import transferRoutes from './routes/transfers.js';
 import downloadRoutes from './routes/download.js';
 import adminRoutes from './routes/admin.js';
 import peerRoutes from './routes/peers.js';
+import linkRoutes from './routes/links.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 /** Built frontend. `npm run build` puts Vite's output here. */
@@ -166,6 +167,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(downloadRoutes);
   await app.register(adminRoutes);
   await app.register(peerRoutes);
+  await app.register(linkRoutes);
 
   app.get('/api/health', async () => ({ ok: true, time: Date.now() }));
 

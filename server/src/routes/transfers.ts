@@ -134,6 +134,8 @@ export default async function transferRoutes(app: FastifyInstance): Promise<void
     const rows = sentBy(user.id);
     const transfers = buildTransferViews(rows, {
       includeRecipients: true,
+      // The sender's own page is the only place a link is ever handed back.
+      includeLinks: true,
       senderName: () => user.name,
     });
     return { transfers };
@@ -151,6 +153,7 @@ export default async function transferRoutes(app: FastifyInstance): Promise<void
     const senderName = findById(transfer.sender_id)?.name ?? '';
     const [view] = buildTransferViews([transfer], {
       includeRecipients: isSender,
+      includeLinks: isSender,
       senderName: () => senderName,
     });
     return { transfer: view };

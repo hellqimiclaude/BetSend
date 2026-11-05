@@ -13,6 +13,7 @@ import {
   type TransferRow,
 } from '../repos/transfers.js';
 import { findById } from '../repos/users.js';
+import { checkLink } from '../repos/links.js';
 import { notifySender } from '../services/notify.js';
 import { blobPath, blobExists } from '../services/storage.js';
 import { contentDisposition, sanitizeFilename } from '../util/format.js';
@@ -30,19 +31,60 @@ function assertDownloadable(transfer: TransferRow): void {
 interface Access {
   userId: number;
   isRecipient: boolean;
+  /** True when the only reason this is allowed is a download link. */
+  viaLink: boolean;
 }
 
+/**
+ * Who may fetch these bytes.
+ *
+ * Three ways in: the sender, a recipient, or anybody signed in holding a
+ * live download link for this transfer. The third is what makes a link
+ * useful -- somebody covering for a colleague on holiday was never a
+ * recipient -- and it is also why signing in is still required. A link that
+ * leaks outside the company opens a sign-in page and nothing else.
+ */
 function authorize(request: FastifyRequest, transfer: TransferRow): Access {
   const user = currentUser(request);
   const recipient = isRecipient(transfer.id, user.id);
-  if (!recipient && transfer.sender_id !== user.id) {
-    throw forbidden('That transfer was not sent to you.', 'not_yours');
+  if (recipient || transfer.sender_id === user.id) {
+    return { userId: user.id, isRecipient: recipient, viaLink: false };
   }
-  return { userId: user.id, isRecipient: recipient };
+
+  const token = linkTokenFrom(request);
+  const outcome = token ? checkLink(token) : { refused: 'unknown' as const };
+  if ('link' in outcome && outcome.link.transfer_id === transfer.id) {
+    return { userId: user.id, isRecipient: false, viaLink: true };
+  }
+
+  throw forbidden('That transfer was not sent to you.', 'not_yours');
+}
+
+function linkTokenFrom(request: FastifyRequest): string {
+  const query = (request.query ?? {}) as { link?: unknown };
+  return typeof query.link === 'string' ? query.link : '';
 }
 
 /** Record the download once the bytes actually reached the client. */
 function recordWhenComplete(transfer: TransferRow, access: Access, res: NodeJS.WritableStream & { on: Function }): void {
+  /*
+   * A download through a link is logged but does not mark a recipient as
+   * having collected their files. The person who used the link is usually
+   * not a recipient at all, and when they are, somebody else fetching on
+   * their behalf is not the same as them having it -- the sender's "waiting
+   * for" list would otherwise go quiet for the wrong reason.
+   */
+  if (access.viaLink) {
+    res.on('finish', () => {
+      try {
+        logEvent('link.downloaded', transfer.id, access.userId);
+      } catch {
+        /* the response already succeeded */
+      }
+    });
+    return;
+  }
+
   if (!access.isRecipient) return; // senders can re-check their own files without skewing status
   res.on('finish', () => {
     try {

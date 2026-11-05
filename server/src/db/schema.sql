@@ -116,6 +116,30 @@ CREATE TABLE IF NOT EXISTS recipients (
   UNIQUE (transfer_id, user_id)
 );
 
+-- A shareable download link for a transfer.
+--
+-- The point is access that is not tied to the recipient list: somebody
+-- covering for a colleague on holiday was never a recipient and never will
+-- be, but they still need the files. The link grants that, and a signed-in
+-- BetSend account is still required to use it -- so a link that leaks
+-- outside the company is worth nothing to whoever finds it.
+--
+-- The token is stored as it appears in the URL, not hashed, unlike a session
+-- or a setup link. Those are credentials on their own and a leaked one is an
+-- account takeover. This is not: it only works alongside a signed-in
+-- account, and anybody who can read this table can already read the files
+-- themselves off the same disk. Storing it plainly is what lets the sender
+-- copy the link again a week later instead of replacing it and breaking
+-- every place they already pasted it.
+CREATE TABLE IF NOT EXISTS download_links (
+  token       TEXT    PRIMARY KEY,
+  transfer_id TEXT    NOT NULL REFERENCES transfers(id) ON DELETE CASCADE,
+  created_by  INTEGER NOT NULL REFERENCES users(id),
+  created_at  INTEGER NOT NULL,
+  expires_at  INTEGER NOT NULL,
+  revoked_at  INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -137,6 +161,10 @@ CREATE INDEX IF NOT EXISTS idx_transfers_state     ON transfers(state, expires_a
 CREATE INDEX IF NOT EXISTS idx_transfer_files_blob ON transfer_files(blob_id);
 CREATE INDEX IF NOT EXISTS idx_blobs_state         ON blobs(state, ref_count);
 CREATE INDEX IF NOT EXISTS idx_events_ts           ON events(ts);
+-- One live link per transfer, enforced here rather than in a check-then-write
+-- that two requests could race through.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_download_links_live
+  ON download_links(transfer_id) WHERE revoked_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_sessions_user       ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry     ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_setup_tokens_user   ON setup_tokens(user_id);

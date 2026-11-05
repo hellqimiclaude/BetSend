@@ -22,6 +22,10 @@ export interface AppConfig {
   maxUploadSize: number; // bytes; 0 = unlimited
   deleteAfterAllDownloaded: boolean;
   registrationMode: 'open' | 'list';
+  /** Days pre-filled when somebody creates a download link. */
+  linkDefaultDays: number;
+  /** The longest a download link, and so the files behind it, may last. */
+  linkMaxDays: number;
   /** Upload chunk size advertised to the browser, in MB. */
   chunkSizeMb: number;
   /** How often the retention sweeper runs. */
@@ -89,6 +93,12 @@ const DEFAULTS = {
   maxUploadSize: 0,
   deleteAfterAllDownloaded: true,
   registrationMode: 'open' as const,
+  // A week covers the ordinary "here, grab this" case; a month covers
+  // somebody being away and handing the work on, which is what links are
+  // for. Both are adjustable in Admin, because this is really a disk
+  // decision and only you know how much of it there is.
+  linkDefaultDays: 7,
+  linkMaxDays: 30,
   chunkSizeMb: 8,
   cleanupIntervalMinutes: 10,
   orphanUploadHours: 24,
@@ -238,6 +248,8 @@ export function loadConfig(): AppConfig {
       DEFAULTS.deleteAfterAllDownloaded,
     ),
     registrationMode: registrationMode === 'list' ? 'list' : 'open',
+    linkDefaultDays: pickNumber(process.env.LINK_DEFAULT_DAYS, file.linkDefaultDays, DEFAULTS.linkDefaultDays),
+    linkMaxDays: pickNumber(process.env.LINK_MAX_DAYS, file.linkMaxDays, DEFAULTS.linkMaxDays),
     chunkSizeMb: pickNumber(process.env.CHUNK_SIZE_MB, file.chunkSizeMb, DEFAULTS.chunkSizeMb),
     cleanupIntervalMinutes: pickNumber(
       process.env.CLEANUP_INTERVAL_MINUTES,

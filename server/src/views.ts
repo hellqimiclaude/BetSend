@@ -7,6 +7,7 @@ import {
   type TransferFileRow,
   type RecipientRow,
 } from './repos/transfers.js';
+import { liveLinksFor } from './repos/links.js';
 import { isOnline } from './ws/hub.js';
 import type { UserRow } from './repos/users.js';
 
@@ -43,6 +44,8 @@ export interface TransferView {
   sender: { name: string; online: boolean };
   files: FileView[];
   recipients?: RecipientView[];
+  /** The live download link, if the sender has made one. Senders only. */
+  link?: { token: string; createdAt: number; expiresAt: number } | null;
   /** Present on inbox items: this user's own status for the transfer. */
   me?: { seenAt: number | null; downloadedAt: number | null; downloadCount: number };
 }
@@ -105,6 +108,8 @@ function toRecipientView(row: RecipientRow): RecipientView {
 
 export interface BuildOptions {
   includeRecipients?: boolean;
+  /** Include the download link. Only ever set for the sender's own view. */
+  includeLinks?: boolean;
   /** Sender name per transfer id; avoids a second join for the sent view. */
   senderName?: (row: TransferRow) => string;
   /** Per-user status for inbox rows. */
@@ -121,6 +126,8 @@ export function buildTransferViews(rows: TransferRow[], options: BuildOptions = 
   // server-only case costs nothing.
   const directIds = rows.filter((r) => r.delivery === 'direct').map((r) => r.id);
   const directFiles = directIds.length > 0 ? groupBy(directFilesFor(directIds)) : null;
+
+  const links = options.includeLinks ? liveLinksFor(ids) : null;
 
   return rows.map((row) => {
     const senderName = options.senderName ? options.senderName(row) : '';
@@ -140,6 +147,12 @@ export function buildTransferViews(rows: TransferRow[], options: BuildOptions = 
           : (files.get(row.id) ?? []).map(toFileView),
     };
     if (recipients) view.recipients = (recipients.get(row.id) ?? []).map(toRecipientView);
+    if (links) {
+      const link = links.get(row.id);
+      view.link = link
+        ? { token: link.token, createdAt: link.created_at, expiresAt: link.expires_at }
+        : null;
+    }
     if (options.mine) view.me = options.mine(row);
     return view;
   });

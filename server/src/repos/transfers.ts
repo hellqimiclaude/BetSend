@@ -380,7 +380,16 @@ export function expiredTransferIds(): string[] {
   return rows.map((r) => r.id);
 }
 
-/** Live transfers where every recipient has already downloaded. */
+/**
+ * Live transfers where every recipient has already downloaded.
+ *
+ * A transfer with a live download link is excluded, however complete it
+ * looks. The whole purpose of a link is access for somebody who is not on
+ * the recipient list -- a colleague covering for the person on holiday --
+ * and finishing the transfer here would delete the files out from under
+ * them the moment the named recipients had collected theirs. The link's
+ * own expiry is what ends it.
+ */
 export function fullyDownloadedTransferIds(): string[] {
   const rows = getDb()
     .prepare(
@@ -390,9 +399,13 @@ export function fullyDownloadedTransferIds(): string[] {
           AND NOT EXISTS (
             SELECT 1 FROM recipients r
              WHERE r.transfer_id = t.id AND r.downloaded_at IS NULL
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM download_links l
+             WHERE l.transfer_id = t.id AND l.revoked_at IS NULL AND l.expires_at > ?
           )`,
     )
-    .all() as { id: string }[];
+    .all(now()) as { id: string }[];
   return rows.map((r) => r.id);
 }
 

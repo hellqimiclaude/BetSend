@@ -17,6 +17,14 @@ export interface RuntimeSettings {
    */
   registrationMode: 'open' | 'list';
   storageDir: string;
+  /** Days pre-filled when somebody creates a download link. */
+  linkDefaultDays: number;
+  /**
+   * The longest a download link may last, and so the longest its files are
+   * kept. This is the disk knob: ordinary retention sweeps everything in
+   * days, and a link holds its files for as long as it lives.
+   */
+  linkMaxDays: number;
 }
 
 const KEYS: (keyof RuntimeSettings)[] = [
@@ -25,6 +33,8 @@ const KEYS: (keyof RuntimeSettings)[] = [
   'deleteAfterAllDownloaded',
   'registrationMode',
   'storageDir',
+  'linkDefaultDays',
+  'linkMaxDays',
 ];
 
 function defaults(): RuntimeSettings {
@@ -34,6 +44,8 @@ function defaults(): RuntimeSettings {
     deleteAfterAllDownloaded: config.deleteAfterAllDownloaded,
     registrationMode: config.registrationMode,
     storageDir: config.storageDir,
+    linkDefaultDays: config.linkDefaultDays,
+    linkMaxDays: config.linkMaxDays,
   };
 }
 
@@ -55,6 +67,12 @@ export function getSettings(): RuntimeSettings {
       case 'maxUploadSize': {
         const n = Number(raw);
         if (Number.isFinite(n) && n >= 0) out[key] = n;
+        break;
+      }
+      case 'linkDefaultDays':
+      case 'linkMaxDays': {
+        const n = Number(raw);
+        if (Number.isInteger(n) && n >= 1) out[key] = n;
         break;
       }
       case 'deleteAfterAllDownloaded':
