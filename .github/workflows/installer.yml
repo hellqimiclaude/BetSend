@@ -209,8 +209,12 @@ jobs:
           # up on default settings and never answers on the port we ask about.
           $env:CONFIG_FILE = Join-Path $app 'config.json'
           $out = Join-Path $env:RUNNER_TEMP 'byhand-out.log'
+          # Quoted explicitly: -ArgumentList does not quote for you, so
+          # "C:\Program Files\..." arrives at node as two arguments and it
+          # tries to load a module called C:\Program.
+          $entry = '"' + (Join-Path $app 'server\dist\index.js') + '"'
           $byHand = Start-Process -FilePath $systemNode `
-                      -ArgumentList (Join-Path $app 'server\dist\index.js') `
+                      -ArgumentList $entry `
                       -WorkingDirectory $app -PassThru -WindowStyle Hidden `
                       -RedirectStandardOutput $out -RedirectStandardError "$out.err"
           Write-Host "started one by hand as pid $($byHand.Id)"
