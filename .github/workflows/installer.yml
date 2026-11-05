@@ -222,6 +222,22 @@ jobs:
           if ($setup.Length -lt 20MB) { throw "the desktop installer is only $([math]::Round($setup.Length/1MB,1)) MB - the runtime is missing" }
           Write-Host "desktop installer: $($setup.Name)"
 
+          # latest.yml is what every installed copy reads to find out a new
+          # version exists. Without it attached to the release the updater
+          # silently finds nothing, which looks exactly like "no update
+          # available" and would go unnoticed for a release or two.
+          $manifest = 'dist-desktop\latest.yml'
+          if (-not (Test-Path $manifest)) {
+            throw 'electron-builder produced no latest.yml - the auto-updater would have nothing to read'
+          }
+          $yml = Get-Content $manifest -Raw
+          Write-Host $yml
+          $version = (Select-String -InputObject $yml -Pattern 'version:\s*(\S+)').Matches[0].Groups[1].Value
+          if ($setup.Name -notlike "*$version*") {
+            throw "latest.yml says $version but the installer is $($setup.Name) - they must match or the update loops"
+          }
+          if ($yml -notmatch 'sha512:') { throw 'latest.yml carries no checksum' }
+
       # Building an installer proves only that electron-builder ran. This
       # runs the thing: a silent install, then a look at what it actually did
       # to the machine. The right-click verb and the firewall rule are both
@@ -309,7 +325,9 @@ jobs:
             gh release edit "$tag" --notes-file "$notes"
           fi
 
-          gh release upload "$tag" dist-installer/*.exe dist-desktop/*.exe --clobber
+          # latest.yml goes up with them: it is the feed the installed apps
+          # poll, and a release without it is invisible to every one of them.
+          gh release upload "$tag" dist-installer/*.exe dist-desktop/*.exe dist-desktop/latest.yml --clobber
           echo "Server installer and desktop app attached to $tag"
         env:
           GH_TOKEN: ${{ github.token }}

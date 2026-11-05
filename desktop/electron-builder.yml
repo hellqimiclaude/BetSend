@@ -6,11 +6,27 @@ directories:
   output: ../dist-desktop
   buildResources: build
 
-# Only the compiled app. There are no runtime dependencies -- the window shows
-# a page served by the BetSend server, so everything else is a dev tool.
+# The compiled app. electron-builder adds the production dependencies in
+# package.json on top of this -- tus-js-client and electron-updater both
+# arrive that way -- so they are deliberately absent from the list.
 files:
   - dist/**/*
   - package.json
+
+# Where the app looks for a new version.
+#
+# GitHub to begin with, because the repository is public and so this needs
+# no token, no server work and nothing deployed: it proves the updating
+# itself works before any of it is moved in-house.
+#
+# It is not where this should end up. An office LAN may have no way out at
+# all, and 150 machines each pulling 80 MB from github.com is a lot of
+# somebody's internet connection for a file that could have come off the
+# server PC next door.
+publish:
+  provider: github
+  owner: hellqimiclaude
+  repo: BetSend
 
 # There is no native module to rebuild, and in an npm workspace this step
 # reaches the repository root and prunes every dev dependency it finds there,
@@ -31,6 +47,9 @@ win:
   icon: build/icon.png
   # No code signing configured. Windows will warn about an unknown publisher
   # until a certificate is set up; see the README.
+  # Nothing is signed, so there is no publisher name for the updater to
+  # check against. Left on, it refuses every update it downloads.
+  verifyUpdateCodeSignature: false
 
 nsis:
   # Adds the Explorer right-click entry on install and removes it on

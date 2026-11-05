@@ -651,7 +651,7 @@ npm test                      # everything
 npm run test:watch -w server  # re-run on save
 ```
 
-429 tests on Node's built-in runner — no test framework to install. Each run gets a
+446 tests on Node's built-in runner — no test framework to install. Each run gets a
 throwaway SQLite database in a temp directory, so there is nothing to set up and
 nothing to clean up.
 
@@ -668,6 +668,7 @@ nothing to clean up.
 | `peer-link.test.ts`  | Two signed-in people and one real server: the token comes from the real broker, the file lands on a real disk, and the server's storage is checked afterwards to confirm it kept no copy. |
 | `deliver.test.ts`    | Which route each recipient gets, and the fallback to the server when the direct one fails before or during the transfer. |
 | `throughput.test.ts` | The measured estimates: the median, the floor under transfers too small to measure, and admitting it does not know yet. |
+| `updates.test.ts`    | When the app checks for a new version, when it may restart to install one (never mid-transfer, never in a dev checkout), and what the tray says about it. |
 | `links.test.ts`      | Download links: who they let in, that signing in is still required, that the files outlive the recipients collecting, and that revoking does not take the transfer away from the people it was sent to. |
 
 The suite is checked by mutation: deliberately removing the upload authentication
@@ -1132,6 +1133,38 @@ npm run package -w desktop                 # scripts, Electron needs its runtime
 
 The installer lands in `dist-desktop/`. CI builds it on every push and attaches
 it to each release.
+
+### It updates itself
+
+Nobody downloads an installer twice. Once a copy of BetSend is on a machine,
+it checks for a new version an hour after launch and every six hours after
+that, downloads one quietly in the background, and installs it the next time
+that person quits BetSend — which they do at the end of the day anyway.
+
+The tray says what is happening: *Downloading update — 42%*, then *Restart to
+update to 1.4.0*, which is clickable. A desktop notification says the same
+once it has downloaded. Nothing interrupts anyone, and nothing installs while
+a transfer is moving in either direction — replacing the executable under a
+direct transfer would leave the colleague at the other end with half a file
+and no explanation.
+
+A check that fails is written to the log and otherwise ignored. On a network
+with no way out, every check will fail and the app carries on exactly as it
+did.
+
+**The feed is currently GitHub releases**, which needs no setup because the
+repository is public. That is a starting point, not where this should stay:
+an office LAN may have no internet at all, and 150 machines each pulling
+80 MB from github.com is a great deal of one office connection for a file
+that could have come off the server PC next door. Moving the feed to the
+BetSend server is a change to one setting plus a place to put the file.
+
+Because nothing is code-signed, the updater cannot verify a publisher and is
+configured not to try. That means whoever controls the feed can run code on
+every machine. Worth weighing honestly, and worth keeping in proportion: the
+BetSend server already stores and serves every file the company sends, so if
+it is compromised the updater is not the first problem. A code-signing
+certificate would close it properly.
 
 ### The unsigned-publisher warning
 

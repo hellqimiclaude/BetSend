@@ -33,6 +33,15 @@ import {
   writeHistory,
   type History,
 } from './throughput.js';
+import {
+  canInstallNow,
+  describeFailure,
+  FIRST_CHECK_DELAY_MS,
+  NO_UPDATE,
+  shouldCheck,
+  trayLabel,
+  type UpdateState,
+} from './updates.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
@@ -76,6 +85,8 @@ let receiver: PeerReceiver | null = null;
 let incoming: { from: string; name: string; received: number; total: number } | null = null;
 let announcing: NodeJS.Timeout | null = null;
 let history: History = readHistory(THROUGHPUT_FILE);
+/** What the updater is up to, for the tray and for the quit path. */
+let updates: UpdateState = { ...NO_UPDATE };
 
 /**
  * Windows runs the shell verb once per selected file, so a multi-file
@@ -126,6 +137,7 @@ async function start(): Promise<void> {
   // to go.
   void resumePending();
   void startListeningForPeers();
+  startUpdates();
 }
 
 // Closing the last window is not quitting: the app sits in the tray so a
@@ -263,6 +275,10 @@ async function quitSafely(): Promise<void> {
     if (response === 0) return;
   }
   quitting = true;
+
+  // The natural moment: they are closing it anyway, and nothing is moving.
+  if (await installUpdateIfReady()) return;
+
   app.quit();
 }
 
@@ -395,6 +411,7 @@ function refreshTrayMenu(): void {
   // so without this a four-gigabyte transfer is several silent minutes
   // followed by a notification.
   const arriving = incoming ? percentOf(incoming.received, incoming.total) : 0;
+  const updateLabel = trayLabel(updates);
 
   tray.setToolTip(
     busy
@@ -419,6 +436,15 @@ function refreshTrayMenu(): void {
               label: `Receiving ${incoming.name} from ${incoming.from} — ${arriving}%`,
               enabled: false,
             },
+            { type: 'separator' },
+          ] as Electron.MenuItemConstructorOptions[])
+        : []),
+      ...(updateLabel
+        ? ([
+            // Clickable only when there is something a click can do.
+            updates.ready
+              ? { label: updateLabel, click: () => void quitSafely() }
+              : { label: updateLabel, enabled: false },
             { type: 'separator' },
           ] as Electron.MenuItemConstructorOptions[])
         : []),
@@ -637,6 +663,87 @@ function registerHostIpc(): void {
     }
     return result;
   });
+}
+
+// --- keeping itself up to date ------------------------------------------------
+
+/**
+ * Quietly fetch new versions and install them when the app is next closed.
+ *
+ * The alternative is a hundred and fifty people each being told to go to
+ * GitHub, find the right file among two installers whose names differ by
+ * one word, and click through an unknown-publisher warning. That does not
+ * happen, which is how an office ends up supporting four versions at once.
+ *
+ * Nothing here interrupts anybody. A new version downloads in the
+ * background and waits; the tray says it is there; it goes in when they
+ * quit, which they do at the end of the day anyway. A check that fails --
+ * and on a network with no way out every check will fail -- is recorded
+ * and forgotten.
+ */
+function startUpdates(): void {
+  // Loaded lazily so a dev run, which never updates, does not pay for it.
+  if (!app.isPackaged) return;
+
+  void (async () => {
+    const { autoUpdater } = await import('electron-updater');
+
+    autoUpdater.autoDownload = true;
+    // Installing is the one part that must wait for a quiet moment, so it
+    // is driven from quitSafely rather than left to fire on its own.
+    autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.logger = null;
+
+    autoUpdater.on('download-progress', (progress: { percent: number }) => {
+      updates = { ...updates, downloading: Math.floor(progress.percent) };
+      refreshTrayMenu();
+    });
+
+    autoUpdater.on('update-downloaded', (info: { version: string }) => {
+      updates = { ...updates, ready: info.version, downloading: null, failed: null };
+      refreshTrayMenu();
+      announce(
+        `BetSend ${info.version} is ready`,
+        'It will be installed the next time you quit BetSend.',
+      );
+    });
+
+    autoUpdater.on('error', (err: Error) => {
+      updates = { ...updates, downloading: null, failed: describeFailure(err) };
+      console.error('update check failed:', updates.failed);
+      refreshTrayMenu();
+    });
+
+    const check = async (): Promise<void> => {
+      if (!shouldCheck(updates, { packaged: true, online: Boolean(settings.serverUrl), now: Date.now() })) {
+        return;
+      }
+      updates = { ...updates, lastCheckedAt: Date.now() };
+      try {
+        await autoUpdater.checkForUpdates();
+      } catch (err) {
+        // Already reported through the error event; this stops an
+        // unhandled rejection taking the process with it.
+        updates = { ...updates, failed: describeFailure(err) };
+      }
+    };
+
+    // Not at launch: opening the app should not compete with a download.
+    setTimeout(() => void check(), FIRST_CHECK_DELAY_MS).unref?.();
+    setInterval(() => void check(), 6 * 3600_000).unref?.();
+  })();
+}
+
+/** Install a waiting update, if now is a safe moment for it. */
+async function installUpdateIfReady(): Promise<boolean> {
+  if (!updates.ready) return false;
+  if (!canInstallNow({ sending: sending !== null, receiving: incoming !== null })) return false;
+
+  const { autoUpdater } = await import('electron-updater');
+  // isSilent: true so nobody watches an installer they did not ask for;
+  // isForceRunAfter: false because they were quitting, not restarting.
+  autoUpdater.quitAndInstall(true, false);
+  return true;
 }
 
 // --- transfers straight from another machine ---------------------------------
