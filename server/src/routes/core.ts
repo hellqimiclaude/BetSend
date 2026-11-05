@@ -38,6 +38,10 @@ export default async function coreRoutes(app: FastifyInstance): Promise<void> {
       maxUploadSize: settings.maxUploadSize,
       retentionHours: settings.retentionHours,
       deleteAfterAllDownloaded: settings.deleteAfterAllDownloaded,
+      // So the Sent page can pre-fill the days field and cap it without a
+      // second request, and without hardcoding a number the admin can change.
+      linkDefaultDays: settings.linkDefaultDays,
+      linkMaxDays: settings.linkMaxDays,
       uploadEndpoint: '/api/uploads',
       user: user ? toUserView(user) : null,
       unread: user ? unreadCount(user.id) : 0,

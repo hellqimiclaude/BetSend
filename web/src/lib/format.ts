@@ -45,6 +45,19 @@ export function formatWhen(timestamp: number): string {
   return dateTime.format(timestamp);
 }
 
+/**
+ * A date in the future, said plainly.
+ *
+ * formatWhen is relative and assumes the past -- it calls anything within a
+ * minute "just now", which for a link that runs out in three weeks is
+ * actively wrong. A deadline wants an absolute date anyway: "until 26 Nov"
+ * is something somebody can act on, where "in 21 days" has to be worked out
+ * against today.
+ */
+export function formatUntil(timestamp: number): string {
+  return dateTime.format(timestamp);
+}
+
 export function classNames(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(' ');
 }

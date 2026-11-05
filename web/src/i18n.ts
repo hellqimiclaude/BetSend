@@ -108,9 +108,9 @@ const en = {
   'route.title': 'How should this go?',
   'route.subtitle': '{size} to {names}.',
   'route.direct': 'Straight to their PC',
-  'route.directBody': 'The file goes from your machine to theirs and is never stored anywhere else. Both of you have to stay on until it finishes.',
+  'route.directBody': 'The file goes from your machine to theirs and is never stored anywhere else. Both of you have to stay on until it finishes, and there is no link to share afterwards.',
   'route.server': 'Through the server',
-  'route.serverBody': 'The file waits on the server until they download it. You can close BetSend as soon as it has uploaded.',
+  'route.serverBody': 'The file waits on the server until they download it. You can close BetSend as soon as it has uploaded, and you can share a download link afterwards.',
   'route.directPartial': 'Only {names} can take it this way right now; the rest go through the server.',
   'route.noneDirect': 'Nobody you picked has BetSend open right now, so this goes through the server.',
   'route.unknownTime': 'BetSend learns how long each route takes as you use it.',
@@ -121,6 +121,33 @@ const en = {
   'direct.inboxNoApp': 'Saved by the BetSend desktop app, usually in Downloads\\BetSend.',
   'direct.sentNote': 'Sent straight to their PC. Nothing was stored on the server, so there is nothing to cancel.',
   'direct.noExpiry': 'Not stored here',
+
+  'link.title': 'Shared files',
+  'link.sharedBy': 'Sent by {name} on {when}.',
+  'link.availableUntil': 'available until {when}',
+  'link.notAvailable': 'This link is not available',
+  'link.footnote':
+    'You can open this because you are signed in to BetSend. Anyone in the company with this link can download these files.',
+  'link.signInFirst': 'Sign in to open the link you followed.',
+
+  'sent.link': 'Download link',
+  'sent.linkCreate': 'Create a link',
+  'sent.linkDays': 'Works for',
+  'sent.linkDaysUnit': 'days',
+  'sent.linkMax': 'At most {days} days.',
+  'sent.linkCopy': 'Copy link',
+  'sent.linkCopied': 'Link copied.',
+  'sent.linkReplace': 'Replace',
+  'sent.linkRevoke': 'Turn off',
+  'sent.linkRevoked': 'Link turned off.',
+  'sent.linkUntil': 'Works until {when}',
+  'sent.linkExplain':
+    'Anyone in the company with this link can download these files, and they are kept until it expires.',
+  'sent.linkDirect':
+    'This went straight to their PC, so there is no copy here to link to.',
+  'admin.heldByLinks': 'Held by links',
+
+  'sent.linkReplaceWarning': 'The old link will stop working everywhere you pasted it. Continue?',
   'send.offlineOk': 'People do not need to be online — files wait for them.',
 
   'inbox.title': 'Inbox',

@@ -146,6 +146,20 @@ export const IconLock = (p: IconProps) => (
   </Base>
 );
 
+export const IconLink = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L10.6 5.23" />
+    <path d="M14 11a5 5 0 0 0-7.07 0L4.81 13.1a5 5 0 0 0 7.07 7.07l1.52-1.52" />
+  </Base>
+);
+
+export const IconCopy = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="9" y="9" width="11" height="11" rx="2" />
+    <path d="M5 15V5a2 2 0 0 1 2-2h8" />
+  </Base>
+);
+
 export const IconRefresh = (p: IconProps) => (
   <Base {...p}>
     <path d="M20 11a8 8 0 1 0-.6 4" />

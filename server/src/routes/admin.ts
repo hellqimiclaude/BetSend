@@ -30,6 +30,7 @@ import {
 } from '../repos/transfers.js';
 import { totalStoredBytes } from '../repos/blobs.js';
 import { diskUsage } from '../services/storage.js';
+import { linkedStorageBytes } from '../repos/links.js';
 import { getSettings, updateSettings, type RuntimeSettings } from '../services/settings.js';
 import { sweep } from '../services/cleanup.js';
 import { notifyTransferGone } from '../services/notify.js';
@@ -55,6 +56,11 @@ export default async function adminRoutes(app: FastifyInstance): Promise<void> {
         usedByTransfers: totalStoredBytes(),
         diskFree: disk.freeBytes,
         diskTotal: disk.totalBytes,
+        // Split out because these are the ones ordinary retention is not
+        // going to reclaim any time soon: they are being held open by a
+        // link somebody may still be relying on. If disk is tight, this is
+        // the number that explains why.
+        heldByLinks: linkedStorageBytes(),
       },
       counts: {
         users: countUsers(),

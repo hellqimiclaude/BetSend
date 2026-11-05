@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../state/AppContext';
 import { api, ApiError } from '../lib/api';
 import { t } from '../i18n';
-import { classNames, formatBytes, formatDuration, formatWhen } from '../lib/format';
+import { classNames, formatBytes, formatDuration, formatUntil, formatWhen } from '../lib/format';
 import { Badge, Button, Card, ConfirmDialog, EmptyState, LoadingState, ProgressBar } from '../components/ui';
-import { IconCheck, IconClock, IconFile, IconSent, IconTrash } from '../components/Icons';
+import { IconCheck, IconClock, IconCopy, IconFile, IconLink, IconSent, IconTrash } from '../components/Icons';
 import type { TransferView } from '../types';
 
 export function SentView() {
@@ -45,7 +45,13 @@ export function SentView() {
       ) : (
         <div className="flex flex-col gap-3 pb-8">
           {sent.map((transfer) => (
-            <SentCard key={transfer.id} transfer={transfer} now={now} onRevoke={() => setConfirming(transfer.id)} />
+            <SentCard
+              key={transfer.id}
+              transfer={transfer}
+              now={now}
+              onRevoke={() => setConfirming(transfer.id)}
+              onLinkChanged={() => void refreshSent()}
+            />
           ))}
         </div>
       )}
@@ -84,10 +90,12 @@ function SentCard({
   transfer,
   now,
   onRevoke,
+  onLinkChanged,
 }: {
   transfer: TransferView;
   now: number;
   onRevoke: () => void;
+  onLinkChanged: () => void;
 }) {
   const recipients = transfer.recipients ?? [];
   const done = recipients.filter((recipient) => recipient.downloadedAt).length;
@@ -192,9 +200,149 @@ function SentCard({
         // Said plainly, because the missing Cancel button is otherwise the
         // kind of absence somebody reports as a bug.
         <p className="mt-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-          {t('direct.sentNote')}
+          {t('direct.sentNote')} {t('sent.linkDirect')}
         </p>
-      ) : null}
+      ) : (
+        <LinkPanel transfer={transfer} onChanged={onLinkChanged} />
+      )}
     </Card>
+  );
+}
+
+/**
+ * Making, copying and turning off a transfer's download link.
+ *
+ * The link is the only way somebody who was not a recipient can get the
+ * files — the colleague covering for whoever is on holiday — so the panel
+ * says what it grants rather than leaving it to be guessed. Replacing one
+ * asks first, because the old URL stops working wherever it was already
+ * pasted, which is the whole reason it exists.
+ */
+function LinkPanel({ transfer, onChanged }: { transfer: TransferView; onChanged: () => void }) {
+  const { bootstrap, toast } = useApp();
+  const [days, setDays] = useState(() => String(bootstrap?.linkDefaultDays ?? 7));
+  const [busy, setBusy] = useState(false);
+  const maxDays = bootstrap?.linkMaxDays ?? 30;
+
+  const link = transfer.link;
+  const url = link ? `${window.location.origin}/#/d/${link.token}` : '';
+
+  async function create(replacing: boolean) {
+    if (replacing && !window.confirm(t('sent.linkReplaceWarning'))) return;
+    setBusy(true);
+    try {
+      await api.post(`/api/transfers/${transfer.id}/link`, { days: Number(days) });
+      onChanged();
+    } catch (error) {
+      toast('error', (error as ApiError).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revoke() {
+    setBusy(true);
+    try {
+      await api.del(`/api/transfers/${transfer.id}/link`);
+      toast('success', t('sent.linkRevoked'));
+      onChanged();
+    } catch (error) {
+      toast('error', (error as ApiError).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('success', t('sent.linkCopied'));
+    } catch {
+      // Clipboard access is refused on an insecure origin, which a LAN
+      // server on plain http is. Select it instead so Ctrl+C still works.
+      const field = document.getElementById(`link-${transfer.id}`) as HTMLInputElement | null;
+      field?.select();
+    }
+  }
+
+  if (!link) {
+    return (
+      <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
+        <div>
+          <label
+            htmlFor={`days-${transfer.id}`}
+            className="mb-1 block text-xs text-slate-500 dark:text-slate-400"
+          >
+            {t('sent.linkDays')}
+          </label>
+          <div className="flex items-center gap-1.5">
+            <input
+              id={`days-${transfer.id}`}
+              type="number"
+              min={1}
+              max={maxDays}
+              value={days}
+              onChange={(event) => setDays(event.target.value)}
+              className="w-16 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm tabular-nums dark:border-slate-700 dark:bg-slate-900"
+            />
+            <span className="text-xs text-slate-500 dark:text-slate-400">{t('sent.linkDaysUnit')}</span>
+          </div>
+        </div>
+        <Button
+          variant="ghost"
+          className="px-2 py-1"
+          icon={<IconLink className="h-4 w-4" />}
+          disabled={busy}
+          onClick={() => void create(false)}
+        >
+          {t('sent.linkCreate')}
+        </Button>
+        <span className="text-xs text-slate-400 dark:text-slate-500">
+          {t('sent.linkMax', { days: maxDays })}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-3 dark:border-slate-800">
+      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
+        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
+          <IconLink className="h-3.5 w-3.5" />
+          {t('sent.link')}
+        </span>
+        <span className="text-xs text-slate-500 dark:text-slate-400">
+          {t('sent.linkUntil', { when: formatUntil(link.expiresAt) })}
+        </span>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        <input
+          id={`link-${transfer.id}`}
+          readOnly
+          value={url}
+          onFocus={(event) => event.currentTarget.select()}
+          className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300"
+        />
+        <Button
+          variant="ghost"
+          className="px-2 py-1"
+          icon={<IconCopy className="h-4 w-4" />}
+          onClick={() => void copy()}
+        >
+          <span className="sr-only sm:not-sr-only">{t('sent.linkCopy')}</span>
+        </Button>
+        <Button variant="ghost" className="px-2 py-1" disabled={busy} onClick={() => void create(true)}>
+          {t('sent.linkReplace')}
+        </Button>
+        <Button variant="ghost" className="px-2 py-1" disabled={busy} onClick={() => void revoke()}>
+          {t('sent.linkRevoke')}
+        </Button>
+      </div>
+
+      <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+        {t('sent.linkExplain')}
+      </p>
+    </div>
   );
 }

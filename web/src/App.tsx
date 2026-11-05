@@ -9,6 +9,7 @@ import { SendView } from './views/SendView';
 import { InboxView } from './views/InboxView';
 import { SentView } from './views/SentView';
 import { AdminView } from './views/AdminView';
+import { DownloadView } from './views/DownloadView';
 import { Button, ErrorState, LoadingState } from './components/ui';
 import { hostBridge } from './lib/host';
 import { IconBell, IconX } from './components/Icons';
@@ -28,6 +29,21 @@ interface AuthRoute {
   token: string | null;
 }
 
+/**
+ * A shared download link, `#/d/<token>`.
+ *
+ * Kept out of `View` because it carries a token and is reachable by people
+ * the transfer has nothing to do with. It lives in the hash rather than the
+ * query so that signing in — which is a state change, not a navigation —
+ * leaves it untouched, and the person lands on the files they came for
+ * instead of the Send screen.
+ */
+function linkTokenFromHash(): string | null {
+  const raw = window.location.hash.replace(/^#\/?/, '').split('?')[0];
+  const match = /^d\/(.+)$/.exec(raw);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 /** Setup links look like `#/setup?token=…`, so the token survives a refresh. */
 function authFromHash(): AuthRoute {
   const raw = window.location.hash.replace(/^#\/?/, '');
@@ -45,12 +61,14 @@ export function App() {
   const { ready, bootError, user, bootstrap, retryBoot } = useApp();
   const [view, setView] = useState<View>(() => viewFromHash());
   const [auth, setAuth] = useState<AuthRoute>(() => authFromHash());
+  const [linkToken, setLinkToken] = useState<string | null>(() => linkTokenFromHash());
 
   // Hash routing keeps the current screen across a refresh, no router needed.
   useEffect(() => {
     const onHashChange = () => {
       setView(viewFromHash());
       setAuth(authFromHash());
+      setLinkToken(linkTokenFromHash());
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
@@ -66,6 +84,7 @@ export function App() {
   function navigate(next: View) {
     window.location.hash = `/${next}`;
     setView(next);
+    setLinkToken(null);
   }
 
   /**
@@ -117,7 +136,15 @@ export function App() {
     if (auth.screen === 'register' || auth.screen === 'forgot') {
       return <RequestLink mode={auth.screen} onBack={() => goAuth('signin')} />;
     }
-    return <SignIn onRegister={() => goAuth('register')} onForgot={() => goAuth('forgot')} />;
+    return (
+      <SignIn
+        onRegister={() => goAuth('register')}
+        onForgot={() => goAuth('forgot')}
+        // The hash is untouched by signing in, so they land on the files
+        // they followed rather than on the Send screen.
+        hint={linkToken ? t('link.signInFirst') : undefined}
+      />
+    );
   }
 
   return (
@@ -125,10 +152,16 @@ export function App() {
       <Sidebar view={view} onNavigate={navigate} />
       <main className="flex-1 overflow-y-auto px-4 py-6 md:h-screen md:px-8 md:py-8">
         <NotificationPrompt />
-        {view === 'send' ? <SendView /> : null}
-        {view === 'inbox' ? <InboxView /> : null}
-        {view === 'sent' ? <SentView /> : null}
-        {view === 'admin' ? <AdminView /> : null}
+        {linkToken ? (
+          <DownloadView token={linkToken} />
+        ) : (
+          <>
+            {view === 'send' ? <SendView /> : null}
+            {view === 'inbox' ? <InboxView /> : null}
+            {view === 'sent' ? <SentView /> : null}
+            {view === 'admin' ? <AdminView /> : null}
+          </>
+        )}
       </main>
       <Toasts />
     </div>

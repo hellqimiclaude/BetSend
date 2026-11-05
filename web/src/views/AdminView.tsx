@@ -232,6 +232,10 @@ function AdminPanel({ onLock }: { onLock: (() => void) | null }) {
 function StatsGrid({ overview }: { overview: AdminOverview }) {
   const stats = [
     { label: t('admin.usedByTransfers'), value: formatBytes(overview.storage.usedByTransfers) },
+    {
+      label: t('admin.heldByLinks'),
+      value: `${formatBytes(overview.storage.heldByLinks.bytes)} (${overview.storage.heldByLinks.transfers})`,
+    },
     { label: t('admin.diskFree'), value: formatBytes(overview.storage.diskFree) },
     { label: t('admin.activeTransfers'), value: String(overview.counts.activeTransfers) },
     {

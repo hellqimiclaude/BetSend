@@ -61,6 +61,9 @@ lost laptop can be signed out centrally.
 - **Straight to their PC** — between two people running the desktop app, files can go
   machine to machine without touching the server at all. The server still brokers it,
   but never sees a byte. See [Sending straight to someone's PC](#sending-straight-to-someones-pc).
+- **Download links** — share a transfer with a colleague who was never a recipient, for a
+  number of days you choose. Signing in is still required, so a leaked link is worth
+  nothing outside the company. See [Download links](#download-links).
 - **Live notifications** — a WebSocket pushes new transfers to recipients instantly: an
   in-app toast, an inbox badge, and (with permission) a desktop notification.
 - **Inbox** — sender, file names, sizes, note, timestamp and an expiry countdown. Download
@@ -221,6 +224,72 @@ visit. That setting is refused in `publicMode` — on a public URL, the first st
 guess a name would own that account.
 
 Passwords must be at least 10 characters and cannot contain the person's own name.
+
+---
+
+## Download links
+
+A transfer is normally reachable only by the people it was addressed to. That
+breaks the moment somebody goes on holiday and a colleague picks up their
+work: the stand-in was never a recipient, and never will be.
+
+A download link solves that. On the **Sent** page, choose how many days it
+should last and press **Create a link**. You get a URL to paste wherever the
+work is tracked:
+
+```
+http://betsend-pc:8080/#/d/qd_bS8h9OXPEDCrichJXOoag9OMuYJQeBFgscXCQTWQ
+```
+
+**Anyone in the company with that link can download the files — but they must
+be signed in to BetSend.** That is the whole security model. A link that leaks
+outside the company, forwarded or screenshotted, opens a sign-in page and
+nothing else. Inside the company it is deliberately permissive, because that
+is the point: the person covering for a colleague gets the files without
+anybody rewriting who the transfer was sent to.
+
+Somebody following the link while signed out is asked to sign in and then
+lands on the files, not on the Send screen.
+
+### The days are the retention
+
+The number you choose is how long the link works **and** how long the files
+are kept. One number rather than two, because two could disagree, and a link
+to files that were deleted last Tuesday is worse than no link at all.
+
+That also means it overrides the usual sweep. A transfer with a live link is
+exempt from *delete once everyone has downloaded* — otherwise the files would
+vanish the moment the named recipients collected theirs, days before the
+person covering ever clicked.
+
+Defaults are **7 days**, maximum **30**. Both are in Admin, because this is
+really a disk decision: ordinary retention clears everything within days, and
+a link holds its files for as long as it lives. **Admin → Storage** shows how
+much disk links are holding and how many transfers that is.
+
+### Turning one off
+
+**Turn off** kills the link immediately, everywhere it was pasted. The
+recipients keep their own access — revoking a link takes away the extra door,
+not the transfer. **Replace** issues a fresh link and asks first, because the
+old URL stops working wherever it already is.
+
+Every download through a link is recorded against the account that made it,
+so there is always an answer to *who took these files, and when*. It does not
+count as the recipient collecting them: somebody fetching on a colleague's
+behalf is not that colleague having the files, and the sender's "still waiting
+for" list would otherwise go quiet for the wrong reason.
+
+### What cannot have one
+
+A transfer sent **straight to their PC** cannot have a link, and asking says
+so: there is no copy on the server to serve. The route chooser names this
+trade-off when you send, so it is a decision rather than a discovery three
+weeks later.
+
+An expired link says when it expired — *"This link expired on 5 December. Ask
+the sender to send the files again."* — rather than showing a dead page to
+somebody working from an old task.
 
 ---
 
@@ -582,7 +651,7 @@ npm test                      # everything
 npm run test:watch -w server  # re-run on save
 ```
 
-402 tests on Node's built-in runner — no test framework to install. Each run gets a
+429 tests on Node's built-in runner — no test framework to install. Each run gets a
 throwaway SQLite database in a temp directory, so there is nothing to set up and
 nothing to clean up.
 
@@ -599,6 +668,7 @@ nothing to clean up.
 | `peer-link.test.ts`  | Two signed-in people and one real server: the token comes from the real broker, the file lands on a real disk, and the server's storage is checked afterwards to confirm it kept no copy. |
 | `deliver.test.ts`    | Which route each recipient gets, and the fallback to the server when the direct one fails before or during the transfer. |
 | `throughput.test.ts` | The measured estimates: the median, the floor under transfers too small to measure, and admitting it does not know yet. |
+| `links.test.ts`      | Download links: who they let in, that signing in is still required, that the files outlive the recipients collecting, and that revoking does not take the transfer away from the people it was sent to. |
 
 The suite is checked by mutation: deliberately removing the upload authentication
 fails 6 tests, zeroing a reference count instead of decrementing it fails 1, and
@@ -606,6 +676,26 @@ ignoring the delete-after-download setting fails 1. Each of the peer security
 checks was removed in turn to confirm its own test goes red. A suite that never
 goes red is not protecting anything, so it is worth re-checking that way after
 adding to it.
+
+#### Driving the browser
+
+The download-link flow is mostly things no unit test touches: the hash
+surviving a sign-in, the clipboard fallback on a plain-http origin, whether
+the download button carries the token. So there is a browser harness for it:
+
+```bash
+npm run build -w web && node web/test/e2e/link.mjs
+```
+
+It signs in as the sender, uploads a file, creates a link, then opens that URL
+in a **second browser with its own cookie jar** as a colleague who was never a
+recipient — through the sign-in page and onto the files — downloads them,
+checks they are byte for byte the original, confirms the recipient was not
+wrongly marked as having collected, and finally that revoking the link
+produces a page which explains itself.
+
+Thirteen checks. Like the desktop harness below, it is not part of
+`npm test`: it wants Playwright and a browser.
 
 #### Driving the desktop app
 

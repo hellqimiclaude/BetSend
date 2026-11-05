@@ -61,6 +61,11 @@ export interface TransferView {
   files: FileView[];
   recipients?: RecipientView[];
   me?: { seenAt: number | null; downloadedAt: number | null; downloadCount: number };
+  /**
+   * The live download link, on the sender's own view only. Null means the
+   * transfer has none; undefined means this view does not carry links.
+   */
+  link?: { token: string; createdAt: number; expiresAt: number } | null;
 }
 
 export interface Bootstrap {
@@ -80,6 +85,9 @@ export interface Bootstrap {
   maxUploadSize: number;
   retentionHours: number;
   deleteAfterAllDownloaded: boolean;
+  /** Pre-filled and maximum lifetime for a download link, in days. */
+  linkDefaultDays: number;
+  linkMaxDays: number;
   uploadEndpoint: string;
   user: UserView | null;
   unread: number;
@@ -91,6 +99,8 @@ export interface RuntimeSettings {
   deleteAfterAllDownloaded: boolean;
   registrationMode: 'open' | 'list';
   storageDir: string;
+  linkDefaultDays: number;
+  linkMaxDays: number;
 }
 
 export interface AdminOverview {
@@ -98,6 +108,8 @@ export interface AdminOverview {
     directory: string;
     uploadsDirectory: string;
     usedByTransfers: number;
+    /** Transfers kept open by a live download link, and their size. */
+    heldByLinks: { transfers: number; bytes: number };
     diskFree: number;
     diskTotal: number;
   };

@@ -44,7 +44,16 @@ export function exampleAddress(domains: string[] | undefined): string {
   return `j.johnson@${domains?.[0] ?? 'company.com'}`;
 }
 
-export function SignIn({ onRegister, onForgot }: { onRegister: () => void; onForgot: () => void }) {
+export function SignIn({
+  onRegister,
+  onForgot,
+  hint,
+}: {
+  onRegister: () => void;
+  onForgot: () => void;
+  /** Why they are here, when they arrived by following a link. */
+  hint?: string;
+}) {
   const { bootstrap, signIn, toast } = useApp();
   const canRegister = Boolean(bootstrap?.mailConfigured);
 
@@ -76,6 +85,12 @@ export function SignIn({ onRegister, onForgot }: { onRegister: () => void; onFor
         </span>
         <h2 className="text-xl font-semibold">{t('signin.title')}</h2>
       </div>
+
+      {hint ? (
+        <p className="mb-4 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-800 dark:bg-brand-950/50 dark:text-brand-200">
+          {hint}
+        </p>
+      ) : null}
 
       <form
         onSubmit={(event) => {
