@@ -196,9 +196,23 @@ jobs:
           Start-Sleep -Seconds 2
 
           $config = Get-Content (Join-Path $app 'config.json') -Raw | ConvertFrom-Json
-          $byHand = Start-Process -FilePath (Join-Path $app 'node\node.exe') `
+
+          # Deliberately the runner's own Node, not the one bundled under
+          # the install directory. That is the shape of the real failure:
+          # the executable path is nowhere near {app}, so matching on it
+          # finds nothing, and only the command line gives the process away.
+          $systemNode = (Get-Command node -ErrorAction Stop).Source
+          if ($systemNode -like "$app*") { throw "expected a Node outside $app, got $systemNode" }
+          Write-Host "starting the server by hand with $systemNode"
+
+          # The same environment the supervisor sets up, or the server comes
+          # up on default settings and never answers on the port we ask about.
+          $env:CONFIG_FILE = Join-Path $app 'config.json'
+          $out = Join-Path $env:RUNNER_TEMP 'byhand-out.log'
+          $byHand = Start-Process -FilePath $systemNode `
                       -ArgumentList (Join-Path $app 'server\dist\index.js') `
-                      -WorkingDirectory $app -PassThru -WindowStyle Hidden
+                      -WorkingDirectory $app -PassThru -WindowStyle Hidden `
+                      -RedirectStandardOutput $out -RedirectStandardError "$out.err"
           Write-Host "started one by hand as pid $($byHand.Id)"
 
           $up = $false
@@ -212,8 +226,12 @@ jobs:
           }
           if (-not $up) {
             Write-Host 'the hand-started server never answered, so this proves nothing'
+            foreach ($log in @($out, "$out.err")) {
+              if (Test-Path $log) { Write-Host "--- $log"; Get-Content $log -Tail 30 }
+            }
             throw 'could not set up the hand-started case'
           }
+          Write-Host 'the hand-started server is serving'
 
           $before = (Get-FileHash $native).Hash
           $run = Start-Process -FilePath $setup `
