@@ -33,9 +33,11 @@ import {
   writeHistory,
   type History,
 } from './throughput.js';
+import fs from 'node:fs';
 import {
   canInstallNow,
   describeFailure,
+  lastCheckLabel,
   FIRST_CHECK_DELAY_MS,
   NO_UPDATE,
   OFFER_AGAIN_AFTER_MS,
@@ -53,6 +55,15 @@ const PENDING_FILE = path.join(app.getPath('userData'), 'pending.json');
 const TUS_URLS_FILE = path.join(app.getPath('userData'), 'tus-urls.json');
 /** How fast each route has actually been, so estimates are measured. */
 const THROUGHPUT_FILE = path.join(app.getPath('userData'), 'throughput.json');
+/**
+ * What the updater did, and why it did not.
+ *
+ * The checks are deliberately silent, so without this a failing one is
+ * indistinguishable from being up to date -- and when an update does not
+ * arrive there is nothing at all to look at. Small, overwritten each run,
+ * and the tray says where it is.
+ */
+const UPDATE_LOG = path.join(app.getPath('userData'), 'update.log');
 const HEALTH_TIMEOUT_MS = 4000;
 
 /**
@@ -486,12 +497,18 @@ function refreshTrayMenu(): void {
       // update actually landed -- the app updates itself silently, so
       // otherwise nothing ever says it happened.
       { label: `BetSend ${app.getVersion()}`, enabled: false },
+      ...(app.isPackaged
+        ? ([{ label: lastCheckLabel(updates, Date.now()), enabled: false }] as
+            Electron.MenuItemConstructorOptions[])
+        : []),
       // Without this there is no way to find out why an update has not
       // arrived: the automatic checks are deliberately silent, so a
       // failing one looks exactly like being up to date.
       ...(app.isPackaged
-        ? ([{ label: 'Check for updates...', click: () => void checkForUpdates(true) }] as
-            Electron.MenuItemConstructorOptions[])
+        ? ([
+            { label: 'Check for updates...', click: () => void checkForUpdates(true) },
+            { label: 'Open update log', click: () => void shell.showItemInFolder(UPDATE_LOG) },
+          ] as Electron.MenuItemConstructorOptions[])
         : []),
       { type: 'separator' },
       { label: 'Open BetSend', click: () => showMainWindow() },
@@ -732,6 +749,38 @@ function startUpdates(): void {
   if (!app.isPackaged) return;
 
   void (async () => {
+    try {
+      await wireUpdater();
+    } catch (err) {
+      /*
+       * Without this the whole updater could fail to load -- a module
+       * missing from the package, say -- and the only trace would be an
+       * unhandled rejection nobody sees. It would look exactly like an
+       * app that checked and found nothing.
+       */
+      updates = { ...updates, failed: describeFailure(err), lastCheckedAt: Date.now() };
+      updateLog(`could not start the updater: ${updates.failed}`);
+      refreshTrayMenu();
+    }
+  })();
+}
+
+function updateLog(message: string): void {
+  try {
+    fs.appendFileSync(UPDATE_LOG, `${new Date().toISOString()}  ${message}\n`);
+  } catch {
+    /* a log that cannot be written is not worth an error of its own */
+  }
+}
+
+/** electron-updater wants info/warn/error/debug; everything lands in one file. */
+function updateLogger(): { info: (m: unknown) => void; warn: (m: unknown) => void; error: (m: unknown) => void; debug: (m: unknown) => void } {
+  const write = (level: string) => (message: unknown) => updateLog(`${level} ${String(message)}`);
+  return { info: write('info'), warn: write('warn'), error: write('error'), debug: write('debug') };
+}
+
+async function wireUpdater(): Promise<void> {
+  {
     const { autoUpdater } = await import('electron-updater');
     updater = autoUpdater;
 
@@ -739,7 +788,8 @@ function startUpdates(): void {
     // Installing is the one part that must wait for a quiet moment, so it
     // is driven from here rather than left to fire on its own.
     autoUpdater.autoInstallOnAppQuit = false;
-    autoUpdater.logger = null;
+    autoUpdater.logger = updateLogger();
+    updateLog(`BetSend ${app.getVersion()} started`);
 
     autoUpdater.on('download-progress', (progress: { percent: number }) => {
       updates = { ...updates, downloading: Math.floor(progress.percent) };
@@ -769,7 +819,7 @@ function startUpdates(): void {
      * of this exists to remove.
      */
     setInterval(() => void offerUpdate(), 5 * 60_000).unref?.();
-  })();
+  }
 }
 
 async function checkForUpdates(manual: boolean): Promise<void> {
@@ -782,9 +832,11 @@ async function checkForUpdates(manual: boolean): Promise<void> {
 
   updates = { ...updates, lastCheckedAt: Date.now(), failed: null };
   refreshTrayMenu();
+  updateLog(`checking (${manual ? 'asked' : 'scheduled'}), currently ${app.getVersion()}`);
 
   try {
     const result = await updater.checkForUpdates();
+    updateLog(`feed says ${result?.updateInfo?.version ?? 'nothing'}`);
     if (manual && !updates.ready && !updates.downloading) {
       const found = result?.updateInfo?.version;
       if (!found || found === app.getVersion()) {

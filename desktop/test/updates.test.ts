@@ -4,6 +4,7 @@ import {
   CHECK_EVERY_MS,
   canInstallNow,
   describeFailure,
+  lastCheckLabel,
   NO_UPDATE,
   OFFER_AGAIN_AFTER_MS,
   shouldCheck,
@@ -147,6 +148,37 @@ describe('what the tray says', () => {
 
   test('ready beats downloading, so the label cannot go backwards', () => {
     assert.match(trayLabel(state({ ready: '1.4.0', downloading: 99 }))!, /Restart/);
+  });
+});
+
+/**
+ * The absence of this cost an afternoon: an update did not arrive and
+ * there was no way for anybody, including whoever wrote the updater, to
+ * tell whether it had failed, been refused, or never run.
+ */
+describe('saying when it last looked, and what it found', () => {
+  const now = 1_000_000_000;
+
+  test('before the first check it says so, rather than implying all is well', () => {
+    assert.equal(lastCheckLabel(state(), now), 'Not checked for updates yet');
+  });
+
+  test('up to date is stated, not left to be inferred from silence', () => {
+    assert.match(lastCheckLabel(state({ lastCheckedAt: now - 30_000 }), now), /just now: up to date/);
+  });
+
+  test('a failure says what went wrong, where somebody will see it', () => {
+    const failed = state({ lastCheckedAt: now - 5 * 60_000, failed: 'Could not reach the update server.' });
+    assert.equal(lastCheckLabel(failed, now), 'Update check 5 min ago: Could not reach the update server.');
+  });
+
+  test('a waiting update is named', () => {
+    const ready = state({ lastCheckedAt: now - 60_000, ready: '1.4.5' });
+    assert.match(lastCheckLabel(ready, now), /1\.4\.5 ready/);
+  });
+
+  test('hours rather than a long count of minutes', () => {
+    assert.match(lastCheckLabel(state({ lastCheckedAt: now - 3 * 3600_000 }), now), /3h ago/);
   });
 });
 

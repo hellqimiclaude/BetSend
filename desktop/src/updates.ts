@@ -106,6 +106,28 @@ export function trayLabel(state: UpdateState): string | null {
 }
 
 /**
+ * A line in the tray saying when it last looked and what it found.
+ *
+ * Added because its absence cost an afternoon. The checks are silent by
+ * design, which means a failing one and a successful one look identical
+ * from outside: when an update did not arrive there was no way for
+ * anybody, including whoever wrote this, to find out whether it had been
+ * refused, had failed, or had never run at all.
+ */
+export function lastCheckLabel(state: UpdateState, now: number): string {
+  if (state.lastCheckedAt === null) return 'Not checked for updates yet';
+
+  const minutes = Math.floor((now - state.lastCheckedAt) / 60_000);
+  const when =
+    minutes < 1 ? 'just now' : minutes < 60 ? `${minutes} min ago` : `${Math.floor(minutes / 60)}h ago`;
+
+  if (state.failed) return `Update check ${when}: ${state.failed}`;
+  if (state.ready) return `Checked ${when}: ${state.ready} ready`;
+  if (state.downloading !== null) return `Checked ${when}: downloading`;
+  return `Checked ${when}: up to date`;
+}
+
+/**
  * Whether a failure is worth telling somebody about.
  *
  * Almost never. A failed update check means the app carries on exactly as
