@@ -49,6 +49,26 @@ export const NO_UPDATE: UpdateState = {
 };
 
 /**
+ * Pull autoUpdater out of electron-updater, whichever shape it arrives in.
+ *
+ * electron-updater is CommonJS, this app is ESM, and it exposes
+ * autoUpdater as a lazy getter rather than a plain property. Node finds a
+ * CommonJS module's named exports by reading its source statically, and a
+ * getter is not something that can see -- so `import { autoUpdater }`
+ * gives undefined and the real object is only reachable through
+ * `default`.
+ *
+ * This had never worked on any build. The first line of setup assigns to
+ * autoUpdater.autoDownload, which threw a TypeError inside an async
+ * import with nothing listening, so every "check" failed before it
+ * started and said nothing at all.
+ */
+export function resolveAutoUpdater<T>(module: unknown): T | null {
+  const shape = module as { autoUpdater?: T; default?: { autoUpdater?: T } } | null;
+  return shape?.autoUpdater ?? shape?.default?.autoUpdater ?? null;
+}
+
+/**
  * Should the app check now?
  *
  * Never in a dev run: the version there is whatever package.json says, and

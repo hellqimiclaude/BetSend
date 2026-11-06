@@ -5,6 +5,7 @@ import {
   canInstallNow,
   describeFailure,
   lastCheckLabel,
+  resolveAutoUpdater,
   NO_UPDATE,
   OFFER_AGAIN_AFTER_MS,
   shouldCheck,
@@ -26,6 +27,53 @@ function state(partial: Partial<UpdateState> = {}): UpdateState {
 }
 
 const live = { packaged: true, online: true, now: 1_000_000 };
+
+/**
+ * The updater had never run on any build, and nothing said so.
+ *
+ * electron-updater is CommonJS and this app is ESM, so `import {
+ * autoUpdater }` gives undefined: it is a lazy getter, which Node's
+ * static scan of a CommonJS module cannot see. Assigning to a property
+ * of it threw inside an async import nobody was awaiting, which is as
+ * quiet as a failure gets.
+ */
+describe('getting hold of the updater at all', () => {
+  test('it is found on the module', () => {
+    const fake = { ok: true };
+    assert.equal(resolveAutoUpdater({ autoUpdater: fake }), fake);
+  });
+
+  test('and on default, which is where ESM actually puts it', () => {
+    const fake = { ok: true };
+    assert.equal(resolveAutoUpdater({ default: { autoUpdater: fake } }), fake);
+  });
+
+  test('null rather than undefined when it is on neither, so the caller must look', () => {
+    assert.equal(resolveAutoUpdater({}), null);
+    assert.equal(resolveAutoUpdater({ default: {} }), null);
+    assert.equal(resolveAutoUpdater(null), null);
+  });
+
+  /**
+   * Against the real package, so a future version moving it is caught
+   * here rather than by somebody wondering why their app never updates.
+   * The property is inspected and never read: evaluating the getter
+   * constructs an updater, which needs an Electron app to exist.
+   */
+  test('electron-updater still keeps it where we look', async () => {
+    const module = (await import('electron-updater')) as Record<string, unknown>;
+    const onModule = Object.getOwnPropertyDescriptor(module, 'autoUpdater');
+    const onDefault = Object.getOwnPropertyDescriptor(
+      (module.default as object | undefined) ?? {},
+      'autoUpdater',
+    );
+
+    assert.ok(
+      onModule !== undefined || onDefault !== undefined,
+      'electron-updater exposes autoUpdater on neither the module nor its default',
+    );
+  });
+});
 
 describe('deciding whether to look', () => {
   test('a fresh packaged app checks straight away', () => {

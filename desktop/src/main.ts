@@ -38,6 +38,7 @@ import {
   canInstallNow,
   describeFailure,
   lastCheckLabel,
+  resolveAutoUpdater,
   FIRST_CHECK_DELAY_MS,
   NO_UPDATE,
   OFFER_AGAIN_AFTER_MS,
@@ -781,7 +782,12 @@ function updateLogger(): { info: (m: unknown) => void; warn: (m: unknown) => voi
 
 async function wireUpdater(): Promise<void> {
   {
-    const { autoUpdater } = await import('electron-updater');
+    const autoUpdater = resolveAutoUpdater<NonNullable<typeof updater>>(
+      await import('electron-updater'),
+    );
+    if (!autoUpdater) {
+      throw new Error('electron-updater did not expose autoUpdater on the module or its default');
+    }
     updater = autoUpdater;
 
     autoUpdater.autoDownload = true;
