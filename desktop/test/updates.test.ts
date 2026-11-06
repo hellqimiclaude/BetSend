@@ -5,7 +5,9 @@ import {
   canInstallNow,
   describeFailure,
   NO_UPDATE,
+  OFFER_AGAIN_AFTER_MS,
   shouldCheck,
+  shouldOffer,
   trayLabel,
   type UpdateState,
 } from '../src/updates.js';
@@ -51,6 +53,61 @@ describe('deciding whether to look', () => {
   /** There is nothing a second answer could change. */
   test('not while one is waiting to be installed', () => {
     assert.equal(shouldCheck(state({ ready: '1.4.0' }), live), false);
+  });
+});
+
+describe('asking somebody to check', () => {
+  /**
+   * The whole point of a Check for updates button is that it checks now.
+   * Falling through to "not for another four hours" would make it look
+   * broken in exactly the situation somebody reaches for it.
+   */
+  test('a manual check ignores the schedule', () => {
+    const justChecked = state({ lastCheckedAt: live.now - 1000 });
+    assert.equal(shouldCheck(justChecked, live), false);
+    assert.equal(shouldCheck(justChecked, { ...live, manual: true }), true);
+  });
+
+  test('but not while one is already downloading or waiting', () => {
+    assert.equal(shouldCheck(state({ downloading: 10 }), { ...live, manual: true }), false);
+    assert.equal(shouldCheck(state({ ready: '1.4.3' }), { ...live, manual: true }), false);
+  });
+
+  test('and never in a dev run, however it was asked for', () => {
+    assert.equal(shouldCheck(state(), { ...live, packaged: false, manual: true }), false);
+  });
+});
+
+describe('deciding whether to ask about installing', () => {
+  const idle = { now: live.now, sending: false, receiving: false };
+
+  test('nothing to ask about until one has downloaded', () => {
+    assert.equal(shouldOffer(state(), idle), false);
+    assert.equal(shouldOffer(state({ ready: '1.4.3' }), idle), true);
+  });
+
+  /** The install restarts the app; mid-transfer is the wrong moment. */
+  test('not while a transfer is moving', () => {
+    const ready = state({ ready: '1.4.3' });
+    assert.equal(shouldOffer(ready, { ...idle, sending: true }), false);
+    assert.equal(shouldOffer(ready, { ...idle, receiving: true }), false);
+  });
+
+  test('"Later" is honoured, and then expires', () => {
+    const later = state({ ready: '1.4.3', deferredUntil: live.now + OFFER_AGAIN_AFTER_MS });
+    assert.equal(shouldOffer(later, idle), false);
+    assert.equal(shouldOffer(later, { ...idle, now: live.now + OFFER_AGAIN_AFTER_MS + 1 }), true);
+  });
+
+  /**
+   * An update that downloaded mid-transfer must come back on its own.
+   * Otherwise the only way to take it is to quit, which is the manual
+   * step the whole feature exists to remove.
+   */
+  test('an update deferred by a transfer is offered once it finishes', () => {
+    const ready = state({ ready: '1.4.3' });
+    assert.equal(shouldOffer(ready, { ...idle, sending: true }), false);
+    assert.equal(shouldOffer(ready, idle), true);
   });
 });
 

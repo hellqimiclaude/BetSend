@@ -651,7 +651,7 @@ npm test                      # everything
 npm run test:watch -w server  # re-run on save
 ```
 
-446 tests on Node's built-in runner — no test framework to install. Each run gets a
+453 tests on Node's built-in runner — no test framework to install. Each run gets a
 throwaway SQLite database in a temp directory, so there is nothing to set up and
 nothing to clean up.
 
@@ -1136,17 +1136,29 @@ it to each release.
 
 ### It updates itself
 
-Nobody downloads an installer twice. Once a copy of BetSend is on a machine,
-it checks for a new version an hour after launch and every six hours after
-that, downloads one quietly in the background, and installs it the next time
-that person quits BetSend — which they do at the end of the day anyway.
+Nobody downloads an installer twice, and nobody has to restart anything.
+Once a copy of BetSend is on a machine it checks for a new version a minute
+after launch and every four hours after that, downloads one quietly in the
+background, and then asks:
 
-The tray says what is happening: *Downloading update — 42%*, then *Restart to
-update to 1.4.0*, which is clickable. A desktop notification says the same
-once it has downloaded. Nothing interrupts anyone, and nothing installs while
-a transfer is moving in either direction — replacing the executable under a
-direct transfer would leave the colleague at the other end with half a file
-and no explanation.
+> **BetSend 1.4.4 is ready to install.**
+> It takes a few seconds, and BetSend will open again by itself.
+> **[Update and restart]  [Later]**
+
+**Update and restart** does the whole thing — closes the app, runs the
+installer, and reopens it. **Later** keeps it in the tray and asks again in
+four hours, or installs it whenever that person next quits.
+
+Nothing is asked while a transfer is moving in either direction: replacing
+the executable under a direct transfer would leave the colleague at the other
+end with half a file and no explanation. An update that arrives mid-transfer
+waits and offers itself once the transfer finishes.
+
+The tray carries the same information — *Downloading update — 42%*, then
+*Restart to update to 1.4.4* — along with the version it is running now, and
+**Check for updates…** for anybody who would rather not wait. A manual check
+says what it found, including why it failed, which the automatic ones never
+do.
 
 A check that fails is written to the log and otherwise ignored. On a network
 with no way out, every check will fail and the app carries on exactly as it

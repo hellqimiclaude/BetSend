@@ -9,10 +9,24 @@
  * the decisions it makes.
  */
 
-/** Once a day is plenty for an office app, and it is 150 machines. */
-export const CHECK_EVERY_MS = 24 * 3600_000;
+/**
+ * Often enough that a release put out in the morning is on people's
+ * machines by the afternoon, without anybody restarting anything -- and
+ * rare enough that a hundred and fifty machines behind one office
+ * connection are not hammering the update feed.
+ */
+export const CHECK_EVERY_MS = 4 * 3600_000;
 /** A short wait after launch, so a check never competes with opening. */
 export const FIRST_CHECK_DELAY_MS = 60_000;
+/**
+ * How long "Later" lasts.
+ *
+ * An update nobody installs is an update that did not happen, so the
+ * question comes back -- but a dialog that reappears every ten minutes is
+ * one people learn to dismiss without reading, which is worse than not
+ * asking.
+ */
+export const OFFER_AGAIN_AFTER_MS = 4 * 3600_000;
 
 export interface UpdateState {
   /** The version waiting to be installed, once one has downloaded. */
@@ -22,6 +36,8 @@ export interface UpdateState {
   /** The last thing that went wrong, for the tray. */
   failed: string | null;
   lastCheckedAt: number | null;
+  /** Set when somebody said "later", so they are not asked again at once. */
+  deferredUntil: number | null;
 }
 
 export const NO_UPDATE: UpdateState = {
@@ -29,6 +45,7 @@ export const NO_UPDATE: UpdateState = {
   downloading: null,
   failed: null,
   lastCheckedAt: null,
+  deferredUntil: null,
 };
 
 /**
@@ -42,12 +59,31 @@ export const NO_UPDATE: UpdateState = {
  */
 export function shouldCheck(
   state: UpdateState,
-  options: { packaged: boolean; online: boolean; now: number },
+  options: { packaged: boolean; online: boolean; now: number; manual?: boolean },
 ): boolean {
   if (!options.packaged || !options.online) return false;
   if (state.ready !== null || state.downloading !== null) return false;
+  // Somebody who picked "Check for updates" is owed an answer now, not
+  // whenever the schedule next comes round.
+  if (options.manual) return true;
   if (state.lastCheckedAt === null) return true;
   return options.now - state.lastCheckedAt >= CHECK_EVERY_MS;
+}
+
+/**
+ * Is now a good moment to ask about installing?
+ *
+ * Nothing is asked while a transfer is moving -- the install restarts the
+ * app -- and nothing is asked again inside the window "Later" buys.
+ */
+export function shouldOffer(
+  state: UpdateState,
+  options: { now: number; sending: boolean; receiving: boolean },
+): boolean {
+  if (state.ready === null) return false;
+  if (!canInstallNow(options)) return false;
+  if (state.deferredUntil !== null && options.now < state.deferredUntil) return false;
+  return true;
 }
 
 /**

@@ -38,7 +38,9 @@ import {
   describeFailure,
   FIRST_CHECK_DELAY_MS,
   NO_UPDATE,
+  OFFER_AGAIN_AFTER_MS,
   shouldCheck,
+  shouldOffer,
   trayLabel,
   type UpdateState,
 } from './updates.js';
@@ -87,6 +89,10 @@ let announcing: NodeJS.Timeout | null = null;
 let history: History = readHistory(THROUGHPUT_FILE);
 /** What the updater is up to, for the tray and for the quit path. */
 let updates: UpdateState = { ...NO_UPDATE };
+/** electron-updater, once loaded. Null in a dev run, which never updates. */
+let updater: typeof import('electron-updater').autoUpdater | null = null;
+/** Set while the update dialog is on screen, so it cannot open twice. */
+let offering = false;
 
 /**
  * Windows runs the shell verb once per selected file, so a multi-file
@@ -304,7 +310,7 @@ async function quitSafely(): Promise<void> {
   quitting = true;
 
   // The natural moment: they are closing it anyway, and nothing is moving.
-  if (await installUpdateIfReady()) return;
+  if (installUpdateIfReady()) return;
 
   app.quit();
 }
@@ -470,7 +476,7 @@ function refreshTrayMenu(): void {
         ? ([
             // Clickable only when there is something a click can do.
             updates.ready
-              ? { label: updateLabel, click: () => void quitSafely() }
+              ? { label: updateLabel, click: () => void offerUpdate(true) }
               : { label: updateLabel, enabled: false },
             { type: 'separator' },
           ] as Electron.MenuItemConstructorOptions[])
@@ -480,6 +486,13 @@ function refreshTrayMenu(): void {
       // update actually landed -- the app updates itself silently, so
       // otherwise nothing ever says it happened.
       { label: `BetSend ${app.getVersion()}`, enabled: false },
+      // Without this there is no way to find out why an update has not
+      // arrived: the automatic checks are deliberately silent, so a
+      // failing one looks exactly like being up to date.
+      ...(app.isPackaged
+        ? ([{ label: 'Check for updates...', click: () => void checkForUpdates(true) }] as
+            Electron.MenuItemConstructorOptions[])
+        : []),
       { type: 'separator' },
       { label: 'Open BetSend', click: () => showMainWindow() },
       { type: 'separator' },
@@ -720,10 +733,11 @@ function startUpdates(): void {
 
   void (async () => {
     const { autoUpdater } = await import('electron-updater');
+    updater = autoUpdater;
 
     autoUpdater.autoDownload = true;
     // Installing is the one part that must wait for a quiet moment, so it
-    // is driven from quitSafely rather than left to fire on its own.
+    // is driven from here rather than left to fire on its own.
     autoUpdater.autoInstallOnAppQuit = false;
     autoUpdater.logger = null;
 
@@ -735,10 +749,7 @@ function startUpdates(): void {
     autoUpdater.on('update-downloaded', (info: { version: string }) => {
       updates = { ...updates, ready: info.version, downloading: null, failed: null };
       refreshTrayMenu();
-      announce(
-        `BetSend ${info.version} is ready`,
-        'It will be installed the next time you quit BetSend.',
-      );
+      void offerUpdate();
     });
 
     autoUpdater.on('error', (err: Error) => {
@@ -747,35 +758,127 @@ function startUpdates(): void {
       refreshTrayMenu();
     });
 
-    const check = async (): Promise<void> => {
-      if (!shouldCheck(updates, { packaged: true, online: Boolean(settings.serverUrl), now: Date.now() })) {
-        return;
-      }
-      updates = { ...updates, lastCheckedAt: Date.now() };
-      try {
-        await autoUpdater.checkForUpdates();
-      } catch (err) {
-        // Already reported through the error event; this stops an
-        // unhandled rejection taking the process with it.
-        updates = { ...updates, failed: describeFailure(err) };
-      }
-    };
-
     // Not at launch: opening the app should not compete with a download.
-    setTimeout(() => void check(), FIRST_CHECK_DELAY_MS).unref?.();
-    setInterval(() => void check(), 6 * 3600_000).unref?.();
+    setTimeout(() => void checkForUpdates(false), FIRST_CHECK_DELAY_MS).unref?.();
+    setInterval(() => void checkForUpdates(false), 30 * 60_000).unref?.();
+
+    /*
+     * An update that downloaded while somebody was sending, or that they
+     * put off, is offered again once the moment is right -- otherwise the
+     * only way to take it would be to quit, which is the manual step all
+     * of this exists to remove.
+     */
+    setInterval(() => void offerUpdate(), 5 * 60_000).unref?.();
   })();
 }
 
-/** Install a waiting update, if now is a safe moment for it. */
-async function installUpdateIfReady(): Promise<boolean> {
-  if (!updates.ready) return false;
-  if (!canInstallNow({ sending: sending !== null, receiving: incoming !== null })) return false;
+async function checkForUpdates(manual: boolean): Promise<void> {
+  if (!updater) return;
+  if (!shouldCheck(updates, { packaged: true, online: Boolean(settings.serverUrl), now: Date.now(), manual })) {
+    // A manual check still deserves an answer when one is already waiting.
+    if (manual) await offerUpdate(true);
+    return;
+  }
 
-  const { autoUpdater } = await import('electron-updater');
-  // isSilent: true so nobody watches an installer they did not ask for;
-  // isForceRunAfter: false because they were quitting, not restarting.
-  autoUpdater.quitAndInstall(true, false);
+  updates = { ...updates, lastCheckedAt: Date.now(), failed: null };
+  refreshTrayMenu();
+
+  try {
+    const result = await updater.checkForUpdates();
+    if (manual && !updates.ready && !updates.downloading) {
+      const found = result?.updateInfo?.version;
+      if (!found || found === app.getVersion()) {
+        await dialog.showMessageBox({
+          type: 'info',
+          title: 'BetSend',
+          message: `BetSend ${app.getVersion()} is up to date.`,
+          buttons: ['OK'],
+        });
+      }
+    }
+  } catch (err) {
+    updates = { ...updates, failed: describeFailure(err) };
+    refreshTrayMenu();
+    if (manual) {
+      // Only when they asked. An automatic check that fails is not news:
+      // on a network with no way out, every one of them will.
+      await dialog.showMessageBox({
+        type: 'warning',
+        title: 'BetSend',
+        message: 'Could not check for updates.',
+        detail: updates.failed ?? '',
+        buttons: ['OK'],
+      });
+    }
+  }
+}
+
+/**
+ * Ask whether to install now, and do the whole thing if so.
+ *
+ * The app closes, the installer runs, and the app opens again by itself.
+ * Nothing to download, no installer to click through -- which is the
+ * point: the alternative is telling a hundred and fifty people to quit
+ * BetSend at some point today.
+ */
+async function offerUpdate(manual = false): Promise<void> {
+  if (offering) return;
+  const busy = { sending: sending !== null, receiving: incoming !== null };
+
+  if (!updates.ready) return;
+  if (!manual && !shouldOffer(updates, { now: Date.now(), ...busy })) return;
+  if (manual && !canInstallNow(busy)) {
+    await dialog.showMessageBox({
+      type: 'info',
+      title: 'BetSend',
+      message: `BetSend ${updates.ready} is ready to install.`,
+      detail: 'It will be offered again once the transfer in progress has finished.',
+      buttons: ['OK'],
+    });
+    return;
+  }
+
+  offering = true;
+  try {
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      buttons: ['Update and restart', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'BetSend',
+      message: `BetSend ${updates.ready} is ready to install.`,
+      detail: 'It takes a few seconds, and BetSend will open again by itself.',
+    });
+
+    if (response === 0) {
+      installUpdate(true);
+      return;
+    }
+    updates = { ...updates, deferredUntil: Date.now() + OFFER_AGAIN_AFTER_MS };
+    refreshTrayMenu();
+  } finally {
+    offering = false;
+  }
+}
+
+/**
+ * Hand over to the installer.
+ *
+ * isSilent so nobody watches an installer they did not ask for.
+ * runAfter decides whether the app comes back: it does when somebody
+ * pressed Update, and does not when they were quitting anyway.
+ */
+function installUpdate(runAfter: boolean): void {
+  if (!updater || !updates.ready) return;
+  quitting = true;
+  updater.quitAndInstall(true, runAfter);
+}
+
+/** Install a waiting update, if now is a safe moment for it. */
+function installUpdateIfReady(): boolean {
+  if (!updates.ready || !updater) return false;
+  if (!canInstallNow({ sending: sending !== null, receiving: incoming !== null })) return false;
+  installUpdate(false);
   return true;
 }
 
