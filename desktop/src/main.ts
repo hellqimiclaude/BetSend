@@ -102,10 +102,37 @@ const launches = new LaunchCollector((paths) => acceptPaths(paths));
  * sends file paths from Explorer's right-click menu into the running app, and
  * that needs a single known instance to send them to.
  */
+/**
+ * `--quit` asks a running copy to stand down, for an installer about to
+ * replace these files.
+ *
+ * It exists because closing the window hides BetSend to the tray rather
+ * than quitting it, which is the whole point of the tray -- but it is also
+ * exactly what an installer's polite "please close" does. The app duly
+ * hides, the process stays, and Setup reports that BetSend "cannot be
+ * closed. Please close it manually", to somebody who just did.
+ *
+ * The lock is requested first either way: that is what hands this command
+ * line to the copy already running. Getting the lock means there was
+ * nothing to stop, and we must not go on to start the app the installer is
+ * about to overwrite.
+ */
+const wantsQuit = process.argv.includes('--quit');
+
 if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else if (wantsQuit) {
   app.quit();
 } else {
   app.on('second-instance', (_event, argv) => {
+    if (argv.includes('--quit')) {
+      // No confirmation prompt: nobody is watching an installer, and a
+      // transfer in flight is already written down, so it carries on by
+      // itself after the upgrade rather than being lost to the question.
+      quitting = true;
+      void stopListeningForPeers().finally(() => app.quit());
+      return;
+    }
     launches.add(pathsFromArgv(argv));
     showMainWindow();
   });

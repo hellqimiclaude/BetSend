@@ -16,6 +16,45 @@
 
 !define BETSEND_FW_RULE "BetSend direct transfers"
 
+; --- closing a copy that is already running -------------------------------
+;
+; Replacing the default "is it running?" check.
+;
+; The default asks each of the app's windows to close and then looks again.
+; For almost any app that is the end of it; for this one it is precisely
+; wrong. BetSend closes its window to the tray on purpose -- so a transfer
+; carries on and a notification can still arrive -- so the polite request
+; succeeds, the process stays, and Setup tells whoever is installing that
+; BetSend "cannot be closed. Please close it manually", which they have just
+; done.
+;
+; So ask it to quit the way it means to be asked. --quit reaches the running
+; copy through the same single-instance channel the Explorer right-click
+; uses, and it saves what it was doing on the way out. Only if that gets
+; nowhere is it taken down by force, and by then whatever it was doing is
+; written to disk and resumes after the upgrade.
+;
+; taskkill rather than the nsProcess plugin: it is part of Windows, so there
+; is no question of whether the plugin is available in this build.
+
+!macro customCheckAppRunning
+  IfFileExists "$INSTDIR\${APP_EXECUTABLE_FILENAME}" 0 betsendForce
+  DetailPrint "Asking BetSend to close..."
+  nsExec::Exec '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --quit'
+  Pop $0
+  ; Long enough for a tidy shutdown: it writes its pending transfer out and
+  ; tells the server to stop advertising this machine for direct transfers,
+  ; so colleagues do not keep trying to reach a port that has gone.
+  Sleep 4000
+
+betsendForce:
+  ; Nothing to kill is not a failure, so the result is read and dropped.
+  nsExec::Exec 'taskkill /im "${APP_EXECUTABLE_FILENAME}" /f'
+  Pop $0
+  ; The file handles outlive the process by a moment.
+  Sleep 1500
+!macroend
+
 !macro customInstall
   WriteRegStr HKCU "Software\Classes\*\shell\BetSend" "" "Send with BetSend"
   WriteRegStr HKCU "Software\Classes\*\shell\BetSend" "Icon" "$INSTDIR\${APP_EXECUTABLE_FILENAME},0"
