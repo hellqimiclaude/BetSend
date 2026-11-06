@@ -475,6 +475,12 @@ function refreshTrayMenu(): void {
             { type: 'separator' },
           ] as Electron.MenuItemConstructorOptions[])
         : []),
+      // Which version this is. The first question in any support
+      // conversation, and the only way to see from the outside that an
+      // update actually landed -- the app updates itself silently, so
+      // otherwise nothing ever says it happened.
+      { label: `BetSend ${app.getVersion()}`, enabled: false },
+      { type: 'separator' },
       { label: 'Open BetSend', click: () => showMainWindow() },
       { type: 'separator' },
       {
