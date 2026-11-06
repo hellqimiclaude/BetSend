@@ -823,7 +823,25 @@ async function wireUpdater(): Promise<void> {
 }
 
 async function checkForUpdates(manual: boolean): Promise<void> {
-  if (!updater) return;
+  if (!updater) {
+    /*
+     * The updater never loaded. Silence here is the worst possible
+     * answer: pressing a menu item and getting nothing is
+     * indistinguishable from a broken menu item, and it is exactly the
+     * state somebody reaches for this in.
+     */
+    if (manual) {
+      await dialog.showMessageBox({
+        type: 'warning',
+        title: 'BetSend',
+        message: 'The updater did not start.',
+        detail: `${updates.failed ?? 'No reason was recorded.'}\n\nThere may be more in ${UPDATE_LOG}`,
+        buttons: ['OK'],
+      });
+    }
+    return;
+  }
+
   if (!shouldCheck(updates, { packaged: true, online: Boolean(settings.serverUrl), now: Date.now(), manual })) {
     // A manual check still deserves an answer when one is already waiting.
     if (manual) await offerUpdate(true);
@@ -836,14 +854,33 @@ async function checkForUpdates(manual: boolean): Promise<void> {
 
   try {
     const result = await updater.checkForUpdates();
-    updateLog(`feed says ${result?.updateInfo?.version ?? 'nothing'}`);
-    if (manual && !updates.ready && !updates.downloading) {
-      const found = result?.updateInfo?.version;
-      if (!found || found === app.getVersion()) {
+    const found = result?.updateInfo?.version;
+    updateLog(`feed says ${found ?? 'nothing'}`);
+
+    if (manual) {
+      /*
+       * Every path says something. Finding an update used to produce no
+       * dialog at all -- the download started quietly and only spoke up
+       * when it finished -- so a click that worked looked exactly like a
+       * click that did nothing.
+       */
+      if (updates.ready) {
+        await offerUpdate(true);
+      } else if (!found || found === app.getVersion()) {
         await dialog.showMessageBox({
           type: 'info',
           title: 'BetSend',
           message: `BetSend ${app.getVersion()} is up to date.`,
+          buttons: ['OK'],
+        });
+      } else {
+        await dialog.showMessageBox({
+          type: 'info',
+          title: 'BetSend',
+          message: `Downloading BetSend ${found}.`,
+          detail:
+            'It is coming down in the background — the tray shows how far along it is. ' +
+            'You will be asked before anything is installed.',
           buttons: ['OK'],
         });
       }
