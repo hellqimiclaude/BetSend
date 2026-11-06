@@ -966,7 +966,43 @@ async function offerUpdate(manual = false): Promise<void> {
 function installUpdate(runAfter: boolean): void {
   if (!updater || !updates.ready) return;
   quitting = true;
+  updateLog(`installing ${updates.ready}, restart after: ${runAfter}`);
+
+  /*
+   * Let go of everything first, deliberately.
+   *
+   * quitAndInstall spawns the installer and then asks the app to quit.
+   * The installer starts removing these files within a few seconds and
+   * gives up if anything still holds them -- "Failed to uninstall old
+   * application files. Please try running the installer again.: 2", the
+   * uninstaller's silent-mode exit code for having waited long enough.
+   *
+   * An Electron app is several processes all called BetSend.exe, plus a
+   * tray icon and a listening socket, and the ordinary quit path takes
+   * its time over them. None of it is worth keeping when the executable
+   * underneath is about to be replaced.
+   */
+  try {
+    tray?.destroy();
+    tray = null;
+    void receiver?.close();
+    for (const window of BrowserWindow.getAllWindows()) window.destroy();
+  } catch (err) {
+    updateLog(`could not let go cleanly: ${String(err)}`);
+  }
+
   updater.quitAndInstall(true, runAfter);
+
+  /*
+   * And if something still will not die, do not let the installer be the
+   * one to find out. By here the installer is already running and the
+   * files are on their way out; there is nothing this process can
+   * usefully do except stop existing.
+   */
+  setTimeout(() => {
+    updateLog('still running after quitAndInstall; exiting');
+    app.exit(0);
+  }, 3000).unref?.();
 }
 
 /** Install a waiting update, if now is a safe moment for it. */
