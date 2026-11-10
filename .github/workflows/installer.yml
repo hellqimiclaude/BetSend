@@ -167,6 +167,71 @@ jobs:
           if (-not $up) { throw 'BetSend did not come back after the upgrade' }
           Write-Host 'upgraded over a running install, and it is serving again'
 
+      # Settings an administrator chose must survive an upgrade.
+      #
+      # install.ps1 keeps an existing config.json but honours -Port and
+      # -StorageDir when passed, and the installer used to pass them
+      # always -- from the wizard page, which a silent upgrade never
+      # shows, so they were its hardcoded defaults. A server on port 80
+      # with files on another drive came back on 8080 pointing at an
+      # empty folder, database included, and said nothing about it.
+      - name: Upgrade without losing the port and folder
+        shell: powershell
+        run: |
+          $setup = (Get-ChildItem dist-installer -Filter '*.exe' | Select-Object -First 1).FullName
+          $app = "${env:ProgramFiles}\BetSend"
+          $configPath = Join-Path $app 'config.json'
+
+          # Move it somewhere an upgrade's defaults would not land.
+          $custom = 'D:\BetSendFiles'
+          New-Item -ItemType Directory -Force -Path $custom | Out-Null
+          $config = Get-Content $configPath -Raw | ConvertFrom-Json
+          $config.port = 8099
+          $config.storageDir = $custom
+          $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding utf8
+          cmd /c "schtasks /end /tn BetSend >nul 2>&1"
+          Start-Sleep -Seconds 3
+          Write-Host "set port=8099 storageDir=$custom"
+
+          $run = Start-Process -FilePath $setup `
+                   -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=settings.log' `
+                   -PassThru -Wait
+          if ($run.ExitCode -ne 0) {
+            Get-Content settings.log -Tail 40
+            throw "the upgrade exited with $($run.ExitCode)"
+          }
+
+          $after = Get-Content $configPath -Raw | ConvertFrom-Json
+          Write-Host "after upgrade: port=$($after.port) storageDir=$($after.storageDir)"
+          if ($after.port -ne 8099) { throw "the upgrade reset the port to $($after.port)" }
+          if ($after.storageDir -ne $custom) { throw "the upgrade moved storage to $($after.storageDir)" }
+
+          $up = $false
+          foreach ($attempt in 1..45) {
+            Start-Sleep -Seconds 1
+            try {
+              if ((Invoke-WebRequest -Uri "http://127.0.0.1:8099/api/health" -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200) {
+                $up = $true; break
+              }
+            } catch { }
+          }
+          if (-not $up) { throw 'it did not come back on the port it was configured for' }
+          Write-Host 'the port and folder survived, and it is serving on the right one'
+
+          # Put it back so the steps after this one see what they expect.
+          $after.port = 8080
+          $after.storageDir = Join-Path $env:ProgramData 'BetSend'
+          $after | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding utf8
+          cmd /c "schtasks /end /tn BetSend >nul 2>&1"
+          Start-Sleep -Seconds 2
+          cmd /c "schtasks /run /tn BetSend >nul 2>&1"
+          foreach ($attempt in 1..45) {
+            Start-Sleep -Seconds 1
+            try {
+              if ((Invoke-WebRequest -Uri "http://127.0.0.1:8080/api/health" -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200) { break }
+            } catch { }
+          }
+
       # The case the step above does not cover, and the one that actually
       # went wrong on a real machine: a server nobody's scheduled task owns.
       #

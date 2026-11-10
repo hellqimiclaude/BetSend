@@ -69,7 +69,7 @@ Name: "desktopicon"; Description: "Create a shortcut on the desktop"; GroupDescr
 ; Hand over to the same script the source install uses, so there is one
 ; implementation of "write the config, open the firewall, register the task".
 Filename: "powershell.exe"; \
-  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\install.ps1"" -Prebuilt -Quiet -NodeExe ""{app}\node\node.exe"" -Port {code:GetPort} -StorageDir ""{code:GetStorageDir}"""; \
+  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\install.ps1"" -Prebuilt -Quiet -NodeExe ""{app}\node\node.exe""{code:SettingsArgs}"; \
   StatusMsg: "Setting up BetSend..."; Flags: runhidden waituntilterminated
 
 Filename: "{code:BetSendUrl}"; Description: "Open BetSend now"; \
@@ -103,8 +103,10 @@ begin
   SettingsPage.Add('Port (use 80 so nobody has to type a port number):', False);
   SettingsPage.Add('Folder for the files people send:', False);
 
-  SettingsPage.Values[0] := '8080';
-  SettingsPage.Values[1] := ExpandConstant('{commonappdata}\BetSend');
+  { Seeded from the previous install, so an upgrade shows what is running
+    rather than offering to change it back to the defaults. }
+  SettingsPage.Values[0] := GetPreviousData('Port', '8080');
+  SettingsPage.Values[1] := GetPreviousData('StorageDir', ExpandConstant('{commonappdata}\BetSend'));
 end;
 
 function GetPort(Param: String): String;
@@ -117,6 +119,37 @@ function GetStorageDir(Param: String): String;
 begin
   Result := Trim(SettingsPage.Values[1]);
   if Result = '' then Result := ExpandConstant('{commonappdata}\BetSend');
+end;
+
+procedure RegisterPreviousData(PreviousDataKey: Integer);
+begin
+  SetPreviousData(PreviousDataKey, 'Port', GetPort(''));
+  SetPreviousData(PreviousDataKey, 'StorageDir', GetStorageDir(''));
+end;
+
+{
+  The port and folder arguments, or nothing at all.
+
+  install.ps1 keeps an existing config.json but honours either argument
+  when it is passed -- and this always passed both. On a silent upgrade
+  the wizard never runs, so they came from the page's hardcoded defaults
+  and were written over whatever the administrator had chosen. An install
+  on port 80, or with files kept on another drive, came back on 8080
+  pointing at an empty folder in ProgramData, database included. Nothing
+  said so; the files were still there, under the old path.
+
+  So a silent upgrade passes nothing and the existing config stands. An
+  interactive run still passes what the page shows, because somebody
+  looking at that page may have come to change it -- and the page is now
+  seeded from the previous install, so what it shows is the truth rather
+  than a default.
+}
+function SettingsArgs(Param: String): String;
+begin
+  if WizardSilent() and FileExists(ExpandConstant('{app}\config.json')) then
+    Result := ''
+  else
+    Result := ' -Port ' + GetPort('') + ' -StorageDir "' + GetStorageDir('') + '"';
 end;
 
 function BetSendUrl(Param: String): String;
