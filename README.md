@@ -893,9 +893,9 @@ again.: 2"** (desktop app)
 An upgrade replaces the installed files by renaming the old ones out of the way
 first, and that fails if anything still holds one of them — a virus scanner part
 way through a folder whose contents all just changed, or a process Windows has
-not finished tearing down. Up to and including **1.5.2** the uninstaller made a
-single attempt and then stopped with that message; from **1.5.3** it waits the
-handle out for about eighteen seconds before giving up.
+not finished tearing down. Up to and including **1.5.2** the installer gave a
+locked file about twenty seconds before stopping with that message; from
+**1.5.3** it waits well over a minute.
 
 Because the uninstaller that runs during an upgrade is the one the *previous*
 version installed, the fix only takes effect from the first version that carries

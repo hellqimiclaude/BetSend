@@ -96,24 +96,27 @@ done:
 ; An upgrade run by the auto-updater passes --updated, and on that path the
 ; uninstaller does not delete the old files, it *renames* every one of them
 ; into a scratch folder first, so that a failure half way through can be put
-; back. A rename fails if anything at all still holds the file. The stock
-; version tries exactly once, puts everything back and aborts with exit code
-; 2, which the installer then reports as:
+; back. A rename fails if anything at all still holds the file, and the
+; stock version then restores what it moved and aborts with exit code 2 --
+; which the installer reports as:
 ;
 ;   Failed to uninstall old application files. Please try running the
 ;   installer again.: 2
 ;
-; One pass is not enough on a real machine. The app was force-killed a
-; moment earlier and Windows has not finished tearing the process down;
-; Defender is part way through an on-access scan of a folder whose contents
-; all changed seconds ago; a search indexer has a handle open. All of those
-; clear on their own in a few seconds, and all of them currently stop an
-; upgrade dead -- silently, because nobody is watching an installer the
-; updater started.
+; It is not quite a single attempt: the installer re-runs the whole
+; uninstaller up to five times, a second apart, so there is perhaps twenty
+; seconds of tolerance in total. That is not enough on a real machine. The
+; app was force-killed a moment earlier and Windows has not finished tearing
+; the process down; Defender is part way through an on-access scan of a
+; folder whose contents all changed seconds ago; a search indexer has a
+; handle open. Each of those can outlast twenty seconds, and when one does
+; the upgrade stops dead -- silently, because nobody is watching an
+; installer the updater started.
 ;
-; So: try again, for about eighteen seconds, and only then give up with the
-; same error as before. Nothing else differs -- same rename, same restore on
-; failure, same abort at the end.
+; So: retry inside each of those runs too, for about eighteen seconds,
+; which takes the five of them to well over a minute before giving up with
+; the same error as before. Nothing else differs -- same rename, same
+; restore on failure, same abort at the end.
 !macro customRemoveFiles
   Var /GLOBAL removalAttempt
 

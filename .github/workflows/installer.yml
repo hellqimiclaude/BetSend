@@ -462,16 +462,27 @@ jobs:
           Write-Host "upgraded in place: $($exe.FullName)"
 
       # And the same upgrade with one of the installed files deliberately
-      # held open for a few seconds -- which is what Defender, a search
-      # indexer, or a process Windows has not finished tearing down all
-      # look like from the installer's side.
+      # held open -- which is what Defender, a search indexer, or a process
+      # Windows has not finished tearing down all look like from the
+      # installer's side.
       #
-      # Before customRemoveFiles this failed outright: the uninstaller made
-      # a single attempt, put everything back and exited 2. It must now
-      # wait the handle out.
+      # HOLD_SECONDS is chosen to be longer than electron-builder's own
+      # tolerance and shorter than ours. Stock, the uninstaller makes one
+      # rename attempt and aborts, and the installer re-runs the whole
+      # uninstaller five times a second apart: perhaps twenty seconds of
+      # patience in total. customRemoveFiles retries inside each of those
+      # runs for about eighteen seconds, so the same five attempts cover
+      # well over a minute.
+      #
+      # Forty seconds therefore sits between the two, which is what makes
+      # this a test rather than a demonstration: it cannot pass without the
+      # override. The elapsed-time check below is the other half of that --
+      # it fails if the handle was never taken and the upgrade sailed
+      # through in six seconds, which would otherwise look like a pass.
       - name: Upgrade while a file is held open
         shell: powershell
         run: |
+          $HOLD_SECONDS = 40
           $setup = Get-ChildItem dist-desktop -Filter '*.exe' | Select-Object -First 1
           $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter 'BetSend.exe' -ErrorAction SilentlyContinue |
                  Select-Object -First 1
@@ -482,14 +493,23 @@ jobs:
 
           # FileShare None: no reader, no writer, and above all no rename.
           $hold = Start-Job -ScriptBlock {
-            param($path)
+            param($path, $seconds)
             $stream = [System.IO.File]::Open($path, 'Open', 'Read', 'None')
-            Start-Sleep -Seconds 8
+            Start-Sleep -Seconds $seconds
             $stream.Close()
-          } -ArgumentList $asar
+          } -ArgumentList $asar, $HOLD_SECONDS
 
-          # Give the job time to actually take the handle before starting.
-          Start-Sleep -Seconds 3
+          # Wait until the handle is genuinely held, rather than guessing.
+          $deadline = (Get-Date).AddSeconds(20)
+          while ($true) {
+            try {
+              [System.IO.File]::Open($asar, 'Open', 'Read', 'None').Close()
+            } catch {
+              break
+            }
+            if ((Get-Date) -gt $deadline) { throw 'the background job never took the handle' }
+            Start-Sleep -Milliseconds 200
+          }
 
           $started = Get-Date
           $run = Start-Process -FilePath $setup.FullName -ArgumentList '/S','--updated' -Wait -PassThru
@@ -497,7 +517,10 @@ jobs:
           Receive-Job $hold -Wait -AutoRemoveJob | Out-Null
 
           if ($run.ExitCode -ne 0) {
-            throw "a file held for 8 seconds defeated the upgrade (exit $($run.ExitCode) after $seconds s)"
+            throw "a file held for $HOLD_SECONDS seconds defeated the upgrade (exit $($run.ExitCode) after $seconds s)"
+          }
+          if ($seconds -lt ($HOLD_SECONDS - 5)) {
+            throw "the upgrade finished in $seconds s, so it was never actually blocked - this proves nothing"
           }
           Write-Host "waited the handle out and finished in $seconds s"
 
