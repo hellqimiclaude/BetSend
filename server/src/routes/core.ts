@@ -8,6 +8,7 @@ import { toUserView } from '../views.js';
 import { currentUser, optionalUser } from './auth.js';
 import { MIN_PASSWORD_LENGTH } from '../services/passwords.js';
 import { mailConfigured } from '../services/mail.js';
+import { APP_VERSION } from '../version.js';
 
 export default async function coreRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -20,7 +21,7 @@ export default async function coreRoutes(app: FastifyInstance): Promise<void> {
     if (user) touchLastSeen(user.id);
 
     return {
-      app: { name: 'BetSend', version: '1.5.0' },
+      app: { name: 'BetSend', version: APP_VERSION },
       registrationMode: settings.registrationMode,
       // The sign-in screen needs these to decide whether to offer "create an
       // account" and "forgot password" at all.

@@ -671,7 +671,7 @@ npm test                      # everything
 npm run test:watch -w server  # re-run on save
 ```
 
-463 tests on Node's built-in runner — no test framework to install. Each run gets a
+477 tests on Node's built-in runner — no test framework to install. Each run gets a
 throwaway SQLite database in a temp directory, so there is nothing to set up and
 nothing to clean up.
 
@@ -946,6 +946,47 @@ To tell the two apart: a **refused** connection means the address is right and
 nothing is listening on that port; a **timeout** means the packets are being
 dropped, which is the firewall or the wrong machine entirely. The desktop app
 words its error to match.
+
+## Keeping the server up to date
+
+**Admin → Updates** says which version is running and whether a newer one
+exists. The server looks once a minute after it starts and every six hours
+after that; **Check now** looks immediately.
+
+When there is one, **Update now** does the rest: downloads the server
+installer, checks it against the checksum published with the release, stops
+BetSend, installs, and starts it again. The page waits and tells you when it
+is back. Nothing to find on GitHub, and no way to run the wrong one of the
+two installers.
+
+**It is a button, not a schedule, and that is deliberate.** One machine
+serves the whole office, nobody is watching it, and a server that fails to
+come back is an outage with no explanation attached. Three in the afternoon
+is not a moment anything should pick for itself. Pressing it takes about a
+minute, during which BetSend is down and transfers in progress are
+interrupted — uploads resume by themselves, downloads have to be started
+again.
+
+Three things it refuses to do:
+
+- **Install something it cannot vouch for.** The release publishes a SHA-256
+  with the installer, and a download that does not match it is discarded. This
+  is the one place BetSend runs an executable fetched off the internet.
+- **Interrupt an upload.** If any are still arriving it says so and asks you
+  to try again shortly.
+- **Go backwards.** A feed offering an older version, or a version that is not
+  a version, is ignored rather than installed.
+
+Your settings survive: port, storage folder, admin token, retention,
+everyone's accounts and every transfer. The installer keeps the existing
+`config.json` and a silent upgrade passes it nothing to override it with.
+
+The feed is the repository's GitHub releases, set by `updateRepo` in
+`config.json`. Pointing it elsewhere is how this moves in-house later, or how
+a fork follows its own releases. A server with no way out to the internet
+simply never finds an update, says so under **Updates**, and carries on.
+
+---
 
 ## Backups
 

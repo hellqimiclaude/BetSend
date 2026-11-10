@@ -22,6 +22,13 @@ export interface AppConfig {
   maxUploadSize: number; // bytes; 0 = unlimited
   deleteAfterAllDownloaded: boolean;
   registrationMode: 'open' | 'list';
+  /**
+   * Where the server looks for a newer version of itself: an
+   * "owner/repo" on GitHub whose releases carry server-latest.json.
+   * Changing it is how the feed moves off GitHub later, or how a fork
+   * points at its own releases.
+   */
+  updateRepo: string;
   /** Days pre-filled when somebody creates a download link. */
   linkDefaultDays: number;
   /** The longest a download link, and so the files behind it, may last. */
@@ -93,6 +100,7 @@ const DEFAULTS = {
   maxUploadSize: 0,
   deleteAfterAllDownloaded: true,
   registrationMode: 'open' as const,
+  updateRepo: 'hellqimiclaude/BetSend',
   // A week covers the ordinary "here, grab this" case; a month covers
   // somebody being away and handing the work on, which is what links are
   // for. Both are adjustable in Admin, because this is really a disk
@@ -248,6 +256,7 @@ export function loadConfig(): AppConfig {
       DEFAULTS.deleteAfterAllDownloaded,
     ),
     registrationMode: registrationMode === 'list' ? 'list' : 'open',
+    updateRepo: pickString(process.env.UPDATE_REPO, file.updateRepo, DEFAULTS.updateRepo),
     linkDefaultDays: pickNumber(process.env.LINK_DEFAULT_DAYS, file.linkDefaultDays, DEFAULTS.linkDefaultDays),
     linkMaxDays: pickNumber(process.env.LINK_MAX_DAYS, file.linkMaxDays, DEFAULTS.linkMaxDays),
     chunkSizeMb: pickNumber(process.env.CHUNK_SIZE_MB, file.chunkSizeMb, DEFAULTS.chunkSizeMb),

@@ -104,6 +104,14 @@ export interface RuntimeSettings {
 }
 
 export interface AdminOverview {
+  /** What the server has found out about newer versions of itself. */
+  update: {
+    current: string;
+    available: string | null;
+    checkedAt: number | null;
+    error: string | null;
+    installing: boolean;
+  };
   storage: {
     directory: string;
     uploadsDirectory: string;

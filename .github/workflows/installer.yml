@@ -43,7 +43,7 @@ jobs:
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "Inno Setup is not on this runner at $iscc" }
-          & $iscc /DAppVersion=1.5.0 installer\BetSend.iss
+          & $iscc /DAppVersion=1.5.1 installer\BetSend.iss
           if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
           Get-ChildItem dist-installer
 
@@ -484,9 +484,27 @@ jobs:
             gh release edit "$tag" --notes-file "$notes"
           fi
 
+          # The server's own feed. latest.yml describes the desktop app, so
+          # the server has nothing in it to read about itself; this says
+          # which installer is its, how big and what it hashes to. Written
+          # as a file rather than parsed back out of the release notes,
+          # because an update that runs an executable should not depend on
+          # the shape of a paragraph.
+          server_exe=$(basename dist-installer/*.exe)
+          cat > server-latest.json <<JSON
+          {
+            "version": "${tag#v}",
+            "file": "$server_exe",
+            "sha256": "$(sha256sum dist-installer/*.exe | cut -d' ' -f1)",
+            "size": $(stat -c%s dist-installer/*.exe)
+          }
+          JSON
+          cat server-latest.json
+
           # latest.yml goes up with them: it is the feed the installed apps
           # poll, and a release without it is invisible to every one of them.
-          gh release upload "$tag" dist-installer/*.exe dist-desktop/*.exe dist-desktop/latest.yml --clobber
+          gh release upload "$tag" dist-installer/*.exe dist-desktop/*.exe \
+                            dist-desktop/latest.yml server-latest.json --clobber
           echo "Server installer and desktop app attached to $tag"
         env:
           GH_TOKEN: ${{ github.token }}

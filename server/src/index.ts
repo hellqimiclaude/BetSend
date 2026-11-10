@@ -6,6 +6,8 @@ import { attachWebSocket } from './ws/hub.js';
 import { startCleanupLoop } from './services/cleanup.js';
 import { getSettings } from './services/settings.js';
 import { mailConfigured, setMailLogger } from './services/mail.js';
+import { checkForUpdate } from './services/selfupdate.js';
+import { APP_VERSION } from './version.js';
 
 function lanAddresses(): string[] {
   const out: string[] = [];
@@ -29,6 +31,27 @@ async function main(): Promise<void> {
 
   const detachWs = attachWebSocket(app.server, app.log);
   const settings = getSettings();
+
+  /*
+   * Look for a newer BetSend, so the Admin page can say one exists. It
+   * only ever says so: installing is a button somebody presses, because
+   * this machine is the whole office's file transfer and three in the
+   * afternoon is not a moment anything should pick for itself.
+   *
+   * A check that fails is logged and forgotten. On a network with no way
+   * out every one of them will fail, and that is not a fault.
+   */
+  const lookForUpdate = (): void => {
+    void checkForUpdate(APP_VERSION).then((status) => {
+      if (status.available) app.log.info(`BetSend ${status.available} is available`);
+      else if (status.error) app.log.debug({ err: status.error }, 'update check failed');
+    });
+  };
+  // Not during boot: it is a network call and nothing waits on its answer.
+  const firstLook = setTimeout(lookForUpdate, 60_000);
+  const everyFewHours = setInterval(lookForUpdate, 6 * 3600_000);
+  firstLook.unref();
+  everyFewHours.unref();
 
   app.log.info(
     {

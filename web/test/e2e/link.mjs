@@ -333,6 +333,45 @@ const submit = jPage.getByRole('button', { name: /^Send$/ }).last();
   ? ok('with no recipients and no link, Send is not offered')
   : fail('Send was clickable with nothing to send to and no link');
 
+// --- the Admin update panel ----------------------------------------------
+//
+// It cannot reach GitHub from here, which is the useful case to check:
+// a failed check must say so rather than imply everything is current.
+
+await jPage.goto(`${origin}/#/admin`);
+const updateHeading = jPage.getByText('Updates', { exact: true }).first();
+await updateHeading.waitFor({ timeout: 30000 });
+ok('Admin shows an Updates section');
+
+const versionLine = await jPage.locator('text=/This server is running BetSend/').first().innerText();
+/BetSend \d+\.\d+\.\d+/.test(versionLine)
+  ? ok(`and names the running version: ${versionLine.trim()}`)
+  : fail('the running version is not shown', versionLine);
+
+// Before anything has looked, it must not claim to be the newest.
+const beforeCheck = await jPage.locator('text=/This server is running BetSend/').first().innerText();
+/newest version/.test(beforeCheck)
+  ? fail('it claimed to be up to date before checking', beforeCheck)
+  : ok('and does not claim to be up to date before it has looked');
+
+await jPage.getByRole('button', { name: /^Check now$/ }).click();
+// Either answer is fine; silence is not. Matched on the line that only
+// appears once a check has completed, so stale text cannot pass this.
+const answered = await jPage
+  .locator('text=/Last checked|Could not check/')
+  .first()
+  .innerText({ timeout: 30000 })
+  .catch(() => '');
+answered
+  ? ok(`a check says what happened: "${answered.trim().slice(0, 70)}"`)
+  : fail('checking for updates reported nothing at all');
+
+// With nothing newer found, there must be no button offering to install.
+const installOffered = await jPage.getByRole('button', { name: /^Update now$/ }).count();
+installOffered === 0
+  ? ok('and offers no install when there is nothing to install')
+  : fail('an Update now button appeared with no update available');
+
 await browser.close();
 server.kill();
 console.log(failures === 0 ? 'done' : `done with ${failures} failure(s)`);

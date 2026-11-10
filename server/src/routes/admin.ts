@@ -31,6 +31,8 @@ import {
 import { totalStoredBytes } from '../repos/blobs.js';
 import { diskUsage } from '../services/storage.js';
 import { linkedStorageBytes } from '../repos/links.js';
+import { applyUpdate, checkForUpdate, updateStatus } from '../services/selfupdate.js';
+import { APP_VERSION } from '../version.js';
 import { getSettings, updateSettings, type RuntimeSettings } from '../services/settings.js';
 import { sweep } from '../services/cleanup.js';
 import { notifyTransferGone } from '../services/notify.js';
@@ -47,9 +49,30 @@ export default async function adminRoutes(app: FastifyInstance): Promise<void> {
   /** Cheap endpoint the admin page calls to check the token before showing anything. */
   app.post('/api/admin/verify', async () => ({ ok: true }));
 
+  /** Look at the feed now, rather than waiting for the next scheduled look. */
+  app.post('/api/admin/update/check', async () => ({ update: await checkForUpdate(APP_VERSION) }));
+
+  /**
+   * Install the waiting update.
+   *
+   * Answers before the installer has finished, and before this process
+   * has stopped, because the installer's first act is to stop it: there
+   * is nobody left to write a reply to. The page polls /api/health and
+   * watches the version change.
+   */
+  app.post('/api/admin/update', async (request) => {
+    const outcome = await applyUpdate(APP_VERSION);
+    if (!outcome.ok) throw badRequest(outcome.reason, outcome.code);
+
+    logEvent('server.update_started', null, null, `to ${outcome.version}`);
+    request.log.warn(`installing BetSend ${outcome.version}; this server is about to restart`);
+    return { ok: true, version: outcome.version };
+  });
+
   app.get('/api/admin/overview', async () => {
     const disk = diskUsage();
     return {
+      update: updateStatus(APP_VERSION),
       storage: {
         directory: paths.root,
         uploadsDirectory: paths.uploads,

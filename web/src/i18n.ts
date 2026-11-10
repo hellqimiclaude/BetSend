@@ -159,6 +159,25 @@ const en = {
     'This went straight to their PC, so there is no copy here to link to.',
   'admin.heldByLinks': 'Held by links',
 
+  'admin.update.title': 'Updates',
+  'admin.update.current': 'This server is running BetSend {version}.',
+  'admin.update.available': 'BetSend {version} is available.',
+  'admin.update.upToDate': 'This is the newest version.',
+  'admin.update.checked': 'Last checked {when}.',
+  'admin.update.never': 'Not checked yet.',
+  'admin.update.failed': 'Could not check: {reason}',
+  'admin.update.check': 'Check now',
+  'admin.update.checking': 'Checking\u2026',
+  'admin.update.install': 'Update now',
+  'admin.update.installing': 'Installing\u2026',
+  'admin.update.warning':
+    'BetSend will stop for about a minute while it installs, and transfers in progress will be interrupted. Everyone\u2019s files, accounts and settings are kept.',
+  'admin.update.started':
+    'Installing BetSend {version}. This page will reconnect by itself once the server is back.',
+  'admin.update.back': 'BetSend {version} is running.',
+  'admin.update.notBack':
+    'The server has not come back yet. Give it a moment, then reload. If it stays down, check the BetSend task on the server PC.',
+
   'sent.linkReplaceWarning': 'The old link will stop working everywhere you pasted it. Continue?',
   'send.offlineOk': 'People do not need to be online — files wait for them.',
 

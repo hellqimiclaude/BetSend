@@ -175,6 +175,7 @@ function AdminPanel({ onLock }: { onLock: (() => void) | null }) {
       </header>
 
       <StatsGrid overview={overview} />
+      <UpdatePanel update={overview.update} onMessage={(kind, message) => toast(kind, message)} />
       <MailPanel overview={overview} onMessage={(kind, message) => toast(kind, message)} />
       <SettingsForm
         initial={overview.settings}
@@ -780,6 +781,130 @@ function TransfersSection({
         onCancel={() => setDeleting(null)}
         onConfirm={() => void remove(deleting!)}
       />
+    </Card>
+  );
+}
+
+/**
+ * Noticing a new BetSend, and installing it on somebody's say-so.
+ *
+ * Deliberately a button rather than something that happens overnight. One
+ * machine serves the whole office; a server that does not come back is an
+ * outage nobody can explain, and an afternoon is not a moment anything
+ * should choose for itself.
+ *
+ * What it does remove is the part nobody enjoys: finding the release,
+ * telling the two installers apart, and running the right one with the
+ * flags that leave the configuration alone.
+ */
+function UpdatePanel({
+  update,
+  onMessage,
+}: {
+  update: AdminOverview['update'];
+  onMessage: (kind: 'success' | 'error', message: string) => void;
+}) {
+  const [checking, setChecking] = useState(false);
+  const [state, setState] = useState(update);
+  const [installing, setInstalling] = useState(false);
+  const [restarting, setRestarting] = useState<string | null>(null);
+
+  async function check() {
+    setChecking(true);
+    try {
+      const { update: fresh } = await api.post<{ update: AdminOverview['update'] }>(
+        '/api/admin/update/check',
+      );
+      setState(fresh);
+    } catch (err) {
+      onMessage('error', (err as ApiError).message);
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function install() {
+    if (!window.confirm(t('admin.update.warning'))) return;
+    setInstalling(true);
+    try {
+      const { version } = await api.post<{ version: string }>('/api/admin/update');
+      setRestarting(version);
+      onMessage('success', t('admin.update.started', { version }));
+      void waitForServer(version);
+    } catch (err) {
+      setInstalling(false);
+      onMessage('error', (err as ApiError).message);
+    }
+  }
+
+  /*
+   * The install answers before the server stops, because by the time it
+   * has stopped there is nobody left to write a reply. So the page waits
+   * for it to come back and reports what version did.
+   */
+  async function waitForServer(expected: string) {
+    for (let attempt = 0; attempt < 90; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      try {
+        const boot = await api.get<{ app: { version: string } }>('/api/bootstrap');
+        if (boot.app.version === expected) {
+          setRestarting(null);
+          setInstalling(false);
+          setState({ ...state, current: expected, available: null });
+          onMessage('success', t('admin.update.back', { version: expected }));
+          return;
+        }
+      } catch {
+        // Expected while it is down.
+      }
+    }
+    setRestarting(null);
+    setInstalling(false);
+    onMessage('error', t('admin.update.notBack'));
+  }
+
+  return (
+    <Card className="p-4">
+      <SectionTitle>{t('admin.update.title')}</SectionTitle>
+
+      <p className="mt-2 text-sm text-slate-700 dark:text-slate-200">
+        {t('admin.update.current', { version: state.current })}{' '}
+        {/* Only claim this is the newest once something has actually looked.
+            Before that, "available" is null because nothing is known, not
+            because there is nothing. */}
+        {state.available ? (
+          <span className="font-medium text-brand-700 dark:text-brand-300">
+            {t('admin.update.available', { version: state.available })}
+          </span>
+        ) : state.checkedAt && !state.error ? (
+          <span className="text-slate-500 dark:text-slate-400">{t('admin.update.upToDate')}</span>
+        ) : null}
+      </p>
+
+      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+        {state.error
+          ? t('admin.update.failed', { reason: state.error })
+          : state.checkedAt
+            ? t('admin.update.checked', { when: formatWhen(state.checkedAt) })
+            : t('admin.update.never')}
+      </p>
+
+      {restarting ? (
+        <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
+          {t('admin.update.started', { version: restarting })}
+        </p>
+      ) : (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button variant="ghost" disabled={checking || installing} onClick={() => void check()}>
+            {checking ? t('admin.update.checking') : t('admin.update.check')}
+          </Button>
+          {state.available ? (
+            <Button variant="primary" loading={installing} onClick={() => void install()}>
+              {installing ? t('admin.update.installing') : t('admin.update.install')}
+            </Button>
+          ) : null}
+        </div>
+      )}
     </Card>
   );
 }
