@@ -87,3 +87,64 @@ done:
   nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${BETSEND_FW_RULE}"'
   Pop $0
 !macroend
+
+; --- removing the old version ------------------------------------------------
+;
+; This replaces electron-builder's own file-removal block, and the only
+; thing it changes is patience.
+;
+; An upgrade run by the auto-updater passes --updated, and on that path the
+; uninstaller does not delete the old files, it *renames* every one of them
+; into a scratch folder first, so that a failure half way through can be put
+; back. A rename fails if anything at all still holds the file. The stock
+; version tries exactly once, puts everything back and aborts with exit code
+; 2, which the installer then reports as:
+;
+;   Failed to uninstall old application files. Please try running the
+;   installer again.: 2
+;
+; One pass is not enough on a real machine. The app was force-killed a
+; moment earlier and Windows has not finished tearing the process down;
+; Defender is part way through an on-access scan of a folder whose contents
+; all changed seconds ago; a search indexer has a handle open. All of those
+; clear on their own in a few seconds, and all of them currently stop an
+; upgrade dead -- silently, because nobody is watching an installer the
+; updater started.
+;
+; So: try again, for about eighteen seconds, and only then give up with the
+; same error as before. Nothing else differs -- same rename, same restore on
+; failure, same abort at the end.
+!macro customRemoveFiles
+  Var /GLOBAL removalAttempt
+
+  ${if} ${isUpdated}
+    StrCpy $removalAttempt 0
+
+    tryRemoval:
+      IntOp $removalAttempt $removalAttempt + 1
+      CreateDirectory "$PLUGINSDIR\old-install"
+
+      Push ""
+      Call un.atomicRMDir
+      Pop $R0
+
+      ${if} $R0 != 0
+        DetailPrint "Attempt $removalAttempt: still in use: $R0"
+
+        ; Put back whatever did get moved, so a retry starts from a whole
+        ; installation rather than half of one.
+        Push ""
+        Call un.restoreFiles
+        Pop $R1
+
+        ${if} $removalAttempt < 12
+          Sleep 1500
+          Goto tryRemoval
+        ${endIf}
+
+        Abort `Can't rename "$INSTDIR" to "$PLUGINSDIR\old-install": $R0 is in use.`
+      ${endIf}
+  ${endIf}
+
+  RMDir /r $INSTDIR
+!macroend

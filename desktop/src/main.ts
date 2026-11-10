@@ -998,18 +998,34 @@ function installUpdate(runAfter: boolean): void {
     updateLog(`could not let go cleanly: ${String(err)}`);
   }
 
+  /*
+   * quitAndInstall spawns the installer before it returns -- the spawn is
+   * synchronous inside electron-updater -- and only then asks the app to
+   * quit. So by the next line the installer is already running, and every
+   * millisecond this process stays alive is a millisecond it spends in the
+   * installer's way.
+   */
   updater.quitAndInstall(true, runAfter);
 
   /*
-   * And if something still will not die, do not let the installer be the
-   * one to find out. By here the installer is already running and the
-   * files are on their way out; there is nothing this process can
-   * usefully do except stop existing.
+   * Then stop existing, quickly and deliberately.
+   *
+   * This used to wait three seconds, which was long enough for the
+   * installer to lose patience and run `taskkill /f` on us first. Being
+   * force-killed is not the same as exiting: the kill returns as soon as
+   * Windows has marked the process dead, while the executable's mapped
+   * image can stay locked a moment longer -- and the installer, told the
+   * app is gone, immediately tries to rename that very file and fails.
+   *
+   * The installer looks for us 300ms after it starts and again about a
+   * second after that. Leaving well inside that gap means it never kills
+   * anything, so there is no teardown still in flight when it starts
+   * moving files.
    */
   setTimeout(() => {
-    updateLog('still running after quitAndInstall; exiting');
+    updateLog('handed over to the installer; exiting');
     app.exit(0);
-  }, 3000).unref?.();
+  }, 800).unref?.();
 }
 
 /** Install a waiting update, if now is a safe moment for it. */

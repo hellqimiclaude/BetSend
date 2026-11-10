@@ -888,6 +888,27 @@ supervisor records every exit and restart there with a timestamp.
 The build did not finish. Re-run `Install BetSend.bat` (or `npm run build`) — the server
 serves the compiled frontend from `server/public`.
 
+**"Failed to uninstall old application files. Please try running the installer
+again.: 2"** (desktop app)
+An upgrade replaces the installed files by renaming the old ones out of the way
+first, and that fails if anything still holds one of them — a virus scanner part
+way through a folder whose contents all just changed, or a process Windows has
+not finished tearing down. Up to and including **1.5.2** the uninstaller made a
+single attempt and then stopped with that message; from **1.5.3** it waits the
+handle out for about eighteen seconds before giving up.
+
+Because the uninstaller that runs during an upgrade is the one the *previous*
+version installed, the fix only takes effect from the first version that carries
+it. To get there, download `BetSend-Desktop-Setup-*.exe` from the release and run
+it by hand once; automatic updates after that use the patient one.
+
+If it still happens, the uninstaller says which file it could not move. Look at
+the end of `install.log` in the installation folder:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\Programs\BetSend\install.log" -Tail 40
+```
+
 **An upload stalled.**
 It will resume by itself — tus retries with a backoff. If the tab was closed, re-adding the
 same file continues from where it stopped rather than restarting.

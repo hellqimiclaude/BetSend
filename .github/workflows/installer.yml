@@ -43,7 +43,7 @@ jobs:
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "Inno Setup is not on this runner at $iscc" }
-          & $iscc /DAppVersion=1.5.2 installer\BetSend.iss
+          & $iscc /DAppVersion=1.5.3 installer\BetSend.iss
           if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
           Get-ChildItem dist-installer
 
@@ -437,6 +437,71 @@ jobs:
           $count = ([regex]::Matches((netsh advfirewall firewall show rule name="BetSend direct transfers" | Out-String), 'Rule Name:')).Count
           if ($count -ne 1) { throw "reinstalling left $count copies of the firewall rule" }
           Write-Host 'reinstall left exactly one rule'
+
+      # The path the auto-updater actually takes, which is not the one
+      # tested above. "/S --updated" makes the installer run the *old*
+      # uninstaller, and on that path the uninstaller renames every
+      # installed file out of the way before replacing it, so that a
+      # failure part way through can be undone. A plain reinstall deletes
+      # instead and never goes near that code.
+      #
+      # It is the renaming that has failed in the field, with "Failed to
+      # uninstall old application files ... : 2".
+      - name: Upgrade the way the updater does
+        shell: powershell
+        run: |
+          $setup = Get-ChildItem dist-desktop -Filter '*.exe' | Select-Object -First 1
+          $run = Start-Process -FilePath $setup.FullName -ArgumentList '/S','--updated' -Wait -PassThru
+          if ($run.ExitCode -ne 0) {
+            throw "the updater's own install path exited with $($run.ExitCode) - 2 means it could not move the old files"
+          }
+
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter 'BetSend.exe' -ErrorAction SilentlyContinue |
+                 Select-Object -First 1
+          if (-not $exe) { throw 'the upgrade left no BetSend.exe behind' }
+          Write-Host "upgraded in place: $($exe.FullName)"
+
+      # And the same upgrade with one of the installed files deliberately
+      # held open for a few seconds -- which is what Defender, a search
+      # indexer, or a process Windows has not finished tearing down all
+      # look like from the installer's side.
+      #
+      # Before customRemoveFiles this failed outright: the uninstaller made
+      # a single attempt, put everything back and exited 2. It must now
+      # wait the handle out.
+      - name: Upgrade while a file is held open
+        shell: powershell
+        run: |
+          $setup = Get-ChildItem dist-desktop -Filter '*.exe' | Select-Object -First 1
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter 'BetSend.exe' -ErrorAction SilentlyContinue |
+                 Select-Object -First 1
+          if (-not $exe) { throw 'nothing is installed to upgrade' }
+
+          $asar = Join-Path $exe.DirectoryName 'resources\app.asar'
+          if (-not (Test-Path $asar)) { throw "expected $asar to exist" }
+
+          # FileShare None: no reader, no writer, and above all no rename.
+          $hold = Start-Job -ScriptBlock {
+            param($path)
+            $stream = [System.IO.File]::Open($path, 'Open', 'Read', 'None')
+            Start-Sleep -Seconds 8
+            $stream.Close()
+          } -ArgumentList $asar
+
+          # Give the job time to actually take the handle before starting.
+          Start-Sleep -Seconds 3
+
+          $started = Get-Date
+          $run = Start-Process -FilePath $setup.FullName -ArgumentList '/S','--updated' -Wait -PassThru
+          $seconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
+          Receive-Job $hold -Wait -AutoRemoveJob | Out-Null
+
+          if ($run.ExitCode -ne 0) {
+            throw "a file held for 8 seconds defeated the upgrade (exit $($run.ExitCode) after $seconds s)"
+          }
+          Write-Host "waited the handle out and finished in $seconds s"
+
+          if (-not (Test-Path $exe.FullName)) { throw 'the upgrade left no BetSend.exe behind' }
 
       - uses: actions/upload-artifact@v4
         with:

@@ -1,5 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   CHECK_EVERY_MS,
   canInstallNow,
@@ -251,5 +252,53 @@ describe('explaining a failure to the log', () => {
   test('a thrown non-error does not itself throw', () => {
     assert.equal(describeFailure('plain string'), 'plain string');
     assert.equal(typeof describeFailure(null), 'string');
+  });
+});
+
+/**
+ * The installer script, read as text.
+ *
+ * None of this can be exercised from Node -- it is NSIS, and it only runs
+ * on Windows during an upgrade nobody watches. What a test can do is make
+ * sure the macros are still there and still say what they have to say,
+ * because deleting one of them produces a perfectly valid installer that
+ * quietly goes back to the old behaviour.
+ */
+describe('the Windows installer script', () => {
+  const script = readFileSync(
+    new URL('../build/installer.nsh', import.meta.url),
+    'utf8',
+  );
+
+  test('it is pure ASCII, like every other Windows script here', () => {
+    const offender = [...script].find((ch) => ch.charCodeAt(0) > 127);
+    assert.equal(offender, undefined, `found ${JSON.stringify(offender)}`);
+  });
+
+  /**
+   * electron-builder's own version renames the installed files out of the
+   * way, and gives up after a single failed attempt with exit code 2 --
+   * "Failed to uninstall old application files". A file held for a second
+   * or two by a virus scanner is enough.
+   */
+  test('removing the old version retries instead of giving up at once', () => {
+    assert.match(script, /!macro customRemoveFiles/, 'the override is gone');
+    assert.match(script, /Call un\.atomicRMDir/, 'it no longer does the atomic rename');
+    assert.match(script, /Call un\.restoreFiles/, 'a failed attempt would leave half an installation');
+    assert.match(script, /Goto tryRemoval/, 'there is no retry');
+
+    const attempts = Number(/\$removalAttempt < (\d+)/.exec(script)?.[1] ?? 0);
+    const pause = Number(/Sleep (\d+)\s*\n\s*Goto tryRemoval/.exec(script)?.[1] ?? 0);
+    assert.ok(attempts >= 5, `only ${attempts} attempts`);
+    assert.ok(
+      attempts * pause >= 10_000,
+      `only ${attempts * pause}ms of patience, which will not outlast a scanner`,
+    );
+  });
+
+  /** Replacing the block means owning the deletion it replaced. */
+  test('it still deletes the folder afterwards', () => {
+    const body = script.slice(script.indexOf('!macro customRemoveFiles'));
+    assert.match(body.slice(0, body.indexOf('!macroend')), /RMDir \/r \$INSTDIR/);
   });
 });
