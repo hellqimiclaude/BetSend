@@ -14,6 +14,7 @@ import {
 import { logEvent, requireTransfer } from '../repos/transfers.js';
 import { findById } from '../repos/users.js';
 import { buildTransferViews } from '../views.js';
+import { appBaseUrl } from '../util/baseurl.js';
 
 /**
  * Download links: access to a transfer's files that travels with a URL
@@ -138,12 +139,29 @@ function refusalMessage(refused: LinkRefusal, link: DownloadLinkRow | undefined)
 
 export interface LinkView {
   token: string;
+  /**
+   * The whole URL, built here rather than in the page.
+   *
+   * The page only knows the address its own browser used, and on the
+   * server PC that is routinely localhost -- which points at a different
+   * machine for everyone the link is given to. It can also be the
+   * computer's name, which Windows machines resolve and phones do not.
+   * The server knows its configured public address, or failing that its
+   * address on the network, and either is reachable from anywhere a
+   * colleague might open the link.
+   */
+  url: string;
   createdAt: number;
   expiresAt: number;
 }
 
 export function toLinkView(link: DownloadLinkRow): LinkView {
-  return { token: link.token, createdAt: link.created_at, expiresAt: link.expires_at };
+  return {
+    token: link.token,
+    url: `${appBaseUrl()}/#/d/${link.token}`,
+    createdAt: link.created_at,
+    expiresAt: link.expires_at,
+  };
 }
 
 export { liveLinkFor };

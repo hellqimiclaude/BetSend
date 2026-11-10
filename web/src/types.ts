@@ -65,7 +65,7 @@ export interface TransferView {
    * The live download link, on the sender's own view only. Null means the
    * transfer has none; undefined means this view does not carry links.
    */
-  link?: { token: string; createdAt: number; expiresAt: number } | null;
+  link?: { token: string; url: string; createdAt: number; expiresAt: number } | null;
 }
 
 export interface Bootstrap {

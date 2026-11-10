@@ -8,6 +8,7 @@ import {
   type RecipientRow,
 } from './repos/transfers.js';
 import { liveLinksFor } from './repos/links.js';
+import { appBaseUrl } from './util/baseurl.js';
 import { isOnline } from './ws/hub.js';
 import type { UserRow } from './repos/users.js';
 
@@ -45,7 +46,7 @@ export interface TransferView {
   files: FileView[];
   recipients?: RecipientView[];
   /** The live download link, if the sender has made one. Senders only. */
-  link?: { token: string; createdAt: number; expiresAt: number } | null;
+  link?: { token: string; url: string; createdAt: number; expiresAt: number } | null;
   /** Present on inbox items: this user's own status for the transfer. */
   me?: { seenAt: number | null; downloadedAt: number | null; downloadCount: number };
 }
@@ -150,7 +151,14 @@ export function buildTransferViews(rows: TransferRow[], options: BuildOptions = 
     if (links) {
       const link = links.get(row.id);
       view.link = link
-        ? { token: link.token, createdAt: link.created_at, expiresAt: link.expires_at }
+        ? {
+            token: link.token,
+            // Built from the server's own address, not the page's: see
+            // toLinkView in routes/links.ts for why that matters.
+            url: `${appBaseUrl()}/#/d/${link.token}`,
+            createdAt: link.created_at,
+            expiresAt: link.expires_at,
+          }
         : null;
     }
     if (options.mine) view.me = options.mine(row);

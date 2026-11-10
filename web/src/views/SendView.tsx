@@ -260,12 +260,12 @@ export function SendView() {
         'success',
         selected.length > 0 ? t('send.success', { names: selected.join(', ') }) : t('send.linkReady'),
       );
-      const token = transfer.link?.token;
+      const created = transfer.link?.url ?? null;
       reset();
       // After reset, so it survives the clear: the link is the only thing
       // somebody has to take away from a send with no recipients, and
       // losing it would mean uploading the files again.
-      if (token) setFreshLink(`${window.location.origin}/#/d/${token}`);
+      if (created) setFreshLink(created);
       void refreshSent();
       void refreshUsers();
     } catch (err) {

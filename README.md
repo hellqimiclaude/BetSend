@@ -241,6 +241,26 @@ get a URL to paste wherever the work is tracked:
 http://betsend-pc:8080/#/d/qd_bS8h9OXPEDCrichJXOoag9OMuYJQeBFgscXCQTWQ
 ```
 
+### The address in the link
+
+The server builds that URL itself, from its own address on the network —
+**not** from whatever your browser happens to show. If it built it from the
+browser, somebody who opened BetSend as `localhost:8080` while sitting at the
+server PC would copy a link saying `localhost`, which on anybody else's
+machine points at their own machine and fails. Same for the Windows computer
+name: other Windows PCs resolve it, phones and Macs generally do not.
+
+So by default a link reads `http://192.168.x.x:8080/#/d/…` — an address every
+device on the office network can reach. Set [`publicUrl`](#configuration) if
+you have a proper name for the server (`http://betsend.betlive.local:8080`, or
+an https address behind a proxy) and links will use that instead, verbatim.
+
+If a link does not open from another device on the same Wi-Fi, check in this
+order: what the link actually says, whether that address opens in a browser on
+that device at all, and whether Windows has the office network marked as
+**Public** — the installer's firewall rule covers private and domain networks
+only, and says so when it finds a Public one.
+
 ### Three ways to send
 
 The checkbox makes recipients optional, so there are three shapes:
@@ -448,7 +468,7 @@ Settings come from three places, in order of precedence:
 | `logLevel`                 | `LOG_LEVEL`                | `info`     | `fatal`, `error`, `warn`, `info`, `debug`, `trace`.                  |
 | `publicMode`               | `PUBLIC_MODE`              | `false`    | Reachable from the internet: `Secure` cookies, HSTS, invite-only sign-up. |
 | `behindProxy`              | `BEHIND_PROXY`             | *publicMode* | Trust `X-Forwarded-*`. Only turn on when a proxy really is in front. |
-| `publicUrl`                | `PUBLIC_URL`               | —          | e.g. `https://files.example.com`. Makes generated setup links complete. |
+| `publicUrl`                | `PUBLIC_URL`               | —          | e.g. `https://files.example.com`. The address used in setup links and download links; otherwise this machine's LAN IP. |
 
 `retentionHours`, `maxUploadSize`, `deleteAfterAllDownloaded` and `registrationMode` can
 also be changed live from the Admin page — those edits are stored in the database and

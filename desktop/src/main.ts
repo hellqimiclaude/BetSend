@@ -1287,10 +1287,15 @@ async function uploadAndCommit(
 
   if (linkDays !== null) {
     const body = (await response.json().catch(() => null)) as
-      | { transfer?: { link?: { token?: string } } }
+      | { transfer?: { link?: { url?: string } } }
       | null;
-    const token = body?.transfer?.link?.token;
-    createdLink = token ? `${origin.replace(/\/+$/, '')}/#/d/${token}` : null;
+    /*
+     * The URL the server built, not one assembled from the address this
+     * app happens to be pointed at. That address is often the computer's
+     * name, which Windows machines resolve and phones do not; the server
+     * uses its configured public address, or its address on the network.
+     */
+    createdLink = body?.transfer?.link?.url ?? null;
   }
 
   return { bytes: files.reduce((sum, file) => sum + file.size, 0), milliseconds: Date.now() - startedAt };

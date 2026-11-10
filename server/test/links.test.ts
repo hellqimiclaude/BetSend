@@ -751,3 +751,70 @@ describe('asking for a link while sending', () => {
     assert.deepEqual(sent.json().transfers, [], 'a refused request still created a transfer');
   });
 });
+
+/**
+ * Where the link points.
+ *
+ * It used to be built in the page, from whatever address that browser
+ * happened to be using. On the server PC that is routinely localhost, so
+ * the sender got a link that pointed at whatever machine opened it; and
+ * where the address was the computer's name, Windows machines resolved it
+ * and phones did not. Either way the link worked for the person who made
+ * it and for nobody else, which is the hardest kind of broken to notice.
+ */
+describe('the address a link carries', () => {
+  async function freshLink() {
+    const johnson = await makeUser('J.Johnson');
+    const beridze = await makeUser('M.Beridze');
+    const blobId = makeBlob(johnson.id);
+    const transfer = makeTransfer(johnson.id, [beridze.id], { blobIds: [blobId] });
+
+    const created = await app.inject({
+      method: 'POST',
+      url: `/api/transfers/${transfer.id}/link`,
+      headers: { cookie: await signIn('J.Johnson') },
+      payload: { days: 7 },
+    });
+    assert.equal(created.statusCode, 200, created.body);
+    return created.json().link as { token: string; url: string };
+  }
+
+  test('the server hands back a whole URL, not just a token', async () => {
+    const link = await freshLink();
+    assert.ok(link.url, 'no url came back with the link');
+    assert.ok(link.url.endsWith(`/#/d/${link.token}`), `url does not end in the token: ${link.url}`);
+  });
+
+  /** The bug, stated plainly. */
+  test('it does not point at localhost, which means the wrong machine', async () => {
+    const { url } = await freshLink();
+    assert.doesNotMatch(url, /localhost|127\.0\.0\.1/, `a link to ${url} works only on the server itself`);
+  });
+
+  test('a configured public address is used as given', async () => {
+    const { config } = await import('../src/config.js');
+    const previous = config.publicUrl;
+    (config as { publicUrl: string }).publicUrl = 'http://files.betlive.com';
+    const { resetBaseUrl } = await import('../src/util/baseurl.js');
+    resetBaseUrl();
+
+    try {
+      const { url } = await freshLink();
+      assert.match(url, /^http:\/\/files\.betlive\.com\/#\/d\//);
+    } finally {
+      (config as { publicUrl: string }).publicUrl = previous;
+      resetBaseUrl();
+    }
+  });
+
+  test('the same URL appears on the Sent page, so both agree', async () => {
+    const link = await freshLink();
+    const sent = await app.inject({
+      method: 'GET',
+      url: '/api/sent',
+      headers: { cookie: await signIn('J.Johnson') },
+    });
+    const row = sent.json().transfers.find((t: { link?: { token: string } }) => t.link?.token === link.token);
+    assert.equal(row.link.url, link.url);
+  });
+});

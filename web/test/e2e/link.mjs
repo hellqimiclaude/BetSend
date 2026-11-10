@@ -59,11 +59,21 @@ const freePort = () =>
 
 const port = await freePort();
 const origin = `http://127.0.0.1:${port}`;
+/*
+ * The address the server is told to put in links, deliberately spelled
+ * differently from the one the browser uses. Both reach the same process,
+ * so the link still works -- but if the page ever goes back to building the
+ * URL out of window.location, the link will say 127.0.0.1 and the check
+ * below will catch it. That is the bug this whole file exists to prevent:
+ * a link that only works on the machine that made it.
+ */
+const publicOrigin = `http://localhost:${port}`;
 fs.writeFileSync(
   path.join(work, 'config.json'),
   JSON.stringify({
     port,
     host: '127.0.0.1',
+    publicUrl: publicOrigin,
     storageDir: path.join(work, 'data'),
     adminToken: ADMIN_TOKEN,
     emailDomains: ['betlive.com'],
@@ -177,8 +187,14 @@ const linkField = jPage.locator('input[readonly]').first();
 await linkField.waitFor({ timeout: 20000 });
 const url = await linkField.inputValue();
 /^https?:\/\/.+\/#\/d\/.{20,}$/.test(url)
-  ? ok(`a link is created: ${url.replace(origin, '')}`)
+  ? ok(`a link is created: ${url.replace(publicOrigin, '')}`)
   : fail('the link looks wrong', url);
+
+// The server's address, not the browser's. Somebody who opens BetSend as
+// localhost on the server PC must still get a link other machines can use.
+url.startsWith(publicOrigin)
+  ? ok('the address comes from the server, not from the browser')
+  : fail(`the link carries the browser's own address`, url);
 
 const until = await jPage.locator('text=/Works until/').first().innerText();
 // A 21-day deadline shown with a relative formatter reads "just now", which
@@ -190,7 +206,7 @@ const until = await jPage.locator('text=/Works until/').first().innerText();
 // --- Williams, who was never a recipient ---------------------------------
 const williams = await browser.newContext();
 const wPage = await williams.newPage();
-await wPage.goto(url.replace(origin, origin)); // same origin, fresh cookie jar
+await wPage.goto(url); // exactly the URL she was given, fresh cookie jar
 
 const hint = await wPage
   .locator('text=/Sign in to open the link/i')

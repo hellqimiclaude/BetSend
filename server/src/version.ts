@@ -6,4 +6,4 @@
  * package.json beside the code to read at runtime. Bumped with the
  * installers as part of cutting a release.
  */
-export const APP_VERSION = '1.5.1';
+export const APP_VERSION = '1.5.2';

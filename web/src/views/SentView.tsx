@@ -225,7 +225,12 @@ function LinkPanel({ transfer, onChanged }: { transfer: TransferView; onChanged:
   const maxDays = bootstrap?.linkMaxDays ?? 30;
 
   const link = transfer.link;
-  const url = link ? `${window.location.origin}/#/d/${link.token}` : '';
+  /*
+   * The server's URL, not one built from window.location. This page only
+   * knows the address this browser used, which on the server PC is
+   * routinely localhost -- a link pointing at whatever machine opens it.
+   */
+  const url = link?.url ?? '';
 
   async function create(replacing: boolean) {
     if (replacing && !window.confirm(t('sent.linkReplaceWarning'))) return;
