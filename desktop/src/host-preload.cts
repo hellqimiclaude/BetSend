@@ -48,8 +48,9 @@ contextBridge.exposeInMainWorld('betsendHost', {
     recipients: string[],
     note: string,
     route?: 'direct' | 'server',
-  ): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke('host:send', { recipients, note, route: route ?? 'server' }),
+    link?: { days: number } | null,
+  ): Promise<{ ok: boolean; error?: string; link?: string | null }> =>
+    ipcRenderer.invoke('host:send', { recipients, note, route: route ?? 'server', link: link ?? null }),
 
   cancel: (): Promise<void> => ipcRenderer.invoke('host:cancel'),
 

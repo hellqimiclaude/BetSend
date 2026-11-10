@@ -555,3 +555,199 @@ describe('keeping the files as long as the link', () => {
     assert.equal(row!.user_id, williams.id);
   });
 });
+
+/**
+ * A transfer with nobody to send to.
+ *
+ * "Put these somewhere and give me a link" is a real thing to want --
+ * pasting it into a task, handing it to somebody not yet chosen -- and it
+ * is the same transfer as any other, minus the recipients.
+ *
+ * The sharp edge is retention. Delete-once-everyone-has-downloaded asks
+ * whether any recipient has not collected; with no recipients at all the
+ * answer is vacuously no, so without the link exemption these would be
+ * swept the moment the first sweep ran.
+ */
+describe('a link with no recipients', () => {
+  async function linkOnly(days = 7) {
+    const johnson = await makeUser('J.Johnson');
+    await makeUser('A.Williams');
+    const blobId = makeBlob(johnson.id, { name: 'brand-kit.zip', bytes: 2048 });
+    const cookie = await signIn('J.Johnson');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/transfers',
+      headers: { cookie },
+      payload: { uploads: [blobId], recipients: [], note: 'for whoever needs it', link: { days } },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    return { response, cookie, blobId, transfer: response.json().transfer };
+  }
+
+  test('sending to nobody is allowed when a link is asked for', async () => {
+    const { transfer } = await linkOnly();
+    assert.deepEqual(transfer.recipients, []);
+    assert.ok(transfer.link?.token, 'no link came back with the transfer');
+  });
+
+  test('sending to nobody without a link is still refused', async () => {
+    const johnson = await makeUser('J.Johnson');
+    const blobId = makeBlob(johnson.id);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/transfers',
+      headers: { cookie: await signIn('J.Johnson') },
+      payload: { uploads: [blobId], recipients: [] },
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error.code, 'no_recipients');
+    assert.match(response.json().error.message, /or create a download link/);
+  });
+
+  test('the link works for a colleague who was never a recipient', async () => {
+    const { transfer, blobId } = await linkOnly();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/transfers/${transfer.id}/files/${blobId}?link=${transfer.link.token}`,
+      headers: { cookie: await signIn('A.Williams') },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.rawPayload.length, 2048);
+  });
+
+  /** The one that would quietly delete the files before anybody used them. */
+  test('the sweep does not finish it just because nobody is waiting', async () => {
+    const { transfer, blobId } = await linkOnly(21);
+
+    updateSettings({ deleteAfterAllDownloaded: true });
+    const { sweep } = await import('../src/services/cleanup.js');
+    await sweep();
+
+    const { getTransfer } = await import('../src/repos/transfers.js');
+    assert.equal(getTransfer(transfer.id)!.state, 'active');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/transfers/${transfer.id}/files/${blobId}?link=${transfer.link.token}`,
+      headers: { cookie: await signIn('A.Williams') },
+    });
+    assert.equal(response.statusCode, 200, 'the files were swept before anybody fetched them');
+  });
+
+  /** Once the link is off, a transfer addressed to nobody has no purpose. */
+  test('revoking the link hands it back to the sweep', async () => {
+    const { transfer, cookie } = await linkOnly();
+    await app.inject({ method: 'DELETE', url: `/api/transfers/${transfer.id}/link`, headers: { cookie } });
+
+    updateSettings({ deleteAfterAllDownloaded: true });
+    const { sweep } = await import('../src/services/cleanup.js');
+    await sweep();
+
+    const { getTransfer } = await import('../src/repos/transfers.js');
+    assert.equal(getTransfer(transfer.id)!.state, 'completed');
+  });
+
+  test('it is on the sender’s Sent page, with the link', async () => {
+    const { transfer, cookie } = await linkOnly();
+    const sent = await app.inject({ method: 'GET', url: '/api/sent', headers: { cookie } });
+    const row = sent.json().transfers.find((t: { id: string }) => t.id === transfer.id);
+
+    assert.ok(row, 'a link-only transfer vanished from Sent');
+    assert.deepEqual(row.recipients, []);
+    assert.equal(row.link.token, transfer.link.token);
+  });
+
+  test('and in nobody’s inbox, because it was addressed to nobody', async () => {
+    await linkOnly();
+    const inbox = await app.inject({
+      method: 'GET',
+      url: '/api/inbox',
+      headers: { cookie: await signIn('A.Williams') },
+    });
+    assert.deepEqual(inbox.json().transfers, []);
+  });
+});
+
+describe('asking for a link while sending', () => {
+  test('recipients and a link at once', async () => {
+    const johnson = await makeUser('J.Johnson');
+    await makeUser('M.Beridze');
+    await makeUser('A.Williams');
+    const blobId = makeBlob(johnson.id, { name: 'brand-kit.zip', bytes: 1024 });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/transfers',
+      headers: { cookie: await signIn('J.Johnson') },
+      payload: { uploads: [blobId], recipients: ['M.Beridze'], link: { days: 14 } },
+    });
+
+    assert.equal(response.statusCode, 200, response.body);
+    const { transfer } = response.json();
+    assert.deepEqual(
+      transfer.recipients.map((r: { name: string }) => r.name),
+      ['M.Beridze'],
+    );
+    assert.ok(transfer.link?.token);
+
+    // Beridze through the inbox, Williams through the link.
+    const inbox = await app.inject({
+      method: 'GET',
+      url: '/api/inbox',
+      headers: { cookie: await signIn('M.Beridze') },
+    });
+    assert.equal(inbox.json().transfers.length, 1);
+
+    const viaLink = await app.inject({
+      method: 'GET',
+      url: `/api/transfers/${transfer.id}/files/${blobId}?link=${transfer.link.token}`,
+      headers: { cookie: await signIn('A.Williams') },
+    });
+    assert.equal(viaLink.statusCode, 200);
+  });
+
+  test('"link": true means one of whatever length is configured', async () => {
+    updateSettings({ linkDefaultDays: 9 });
+    const johnson = await makeUser('J.Johnson');
+    const blobId = makeBlob(johnson.id);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/transfers',
+      headers: { cookie: await signIn('J.Johnson') },
+      payload: { uploads: [blobId], recipients: [], link: true },
+    });
+
+    assert.equal(response.statusCode, 200, response.body);
+    const days = Math.round((response.json().transfer.link.expiresAt - Date.now()) / DAY_MS);
+    assert.equal(days, 9);
+  });
+
+  test('longer than the maximum is refused before anything is committed', async () => {
+    updateSettings({ linkMaxDays: 30 });
+    const johnson = await makeUser('J.Johnson');
+    const blobId = makeBlob(johnson.id);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/transfers',
+      headers: { cookie: await signIn('J.Johnson') },
+      payload: { uploads: [blobId], recipients: [], link: { days: 365 } },
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.match(response.json().error.message, /at most 30 days/);
+
+    const sent = await app.inject({
+      method: 'GET',
+      url: '/api/sent',
+      headers: { cookie: await signIn('J.Johnson') },
+    });
+    assert.deepEqual(sent.json().transfers, [], 'a refused request still created a transfer');
+  });
+});

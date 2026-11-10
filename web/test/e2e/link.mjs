@@ -136,6 +136,15 @@ fs.writeFileSync(asset, assetBytes);
 
 const browser = await chromium.launch();
 
+async function cookieFor(email) {
+  const response = await fetch(`${origin}/api/session`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password: PASSWORD }),
+  });
+  return cookieOf(response);
+}
+
 async function signIn(page, email) {
   await page.waitForSelector('input[type="email"]', { timeout: 30000 });
   await page.fill('input[type="email"]', email);
@@ -247,6 +256,82 @@ const gone = await wPage
 gone
   ? ok(`a revoked link explains itself: "${gone.trim()}"`)
   : fail('a revoked link did not say what happened');
+
+// --- the three ways to send ----------------------------------------------
+//
+// Recipients only is everything above. These are the two new shapes: a
+// link alongside a send, and a link with nobody to send to at all.
+
+async function sendFrom(page, { recipients, link, file }) {
+  await page.goto(`${origin}/#/send`);
+  await page.waitForSelector('input[type="file"]', { state: 'attached', timeout: 20000 });
+  await page.setInputFiles('input[type="file"]', file);
+  for (const name of recipients) await page.getByText(name, { exact: false }).first().click();
+  if (link) await page.locator('input[type="checkbox"]').first().check();
+  await page.getByRole('button', { name: /^(Send|Send and create link|Create link)$/ }).last().click();
+}
+
+// 1. Recipients and a link together.
+const both = path.join(work, 'both.bin');
+fs.writeFileSync(both, crypto.randomBytes(256 * 1024));
+await sendFrom(jPage, { recipients: ['M.Beridze'], link: true, file: both });
+
+const bothLink = jPage.locator('input[readonly]').first();
+await bothLink.waitFor({ timeout: 60000 });
+const bothUrl = await bothLink.inputValue();
+/#\/d\/.{20,}$/.test(bothUrl) ? ok('sending with a link gives back a link') : fail('no link after send+link', bothUrl);
+
+const beridzeInbox = await (
+  await fetch(`${origin}/api/inbox`, { headers: { cookie: await cookieFor('m.beridze@betlive.com') } })
+).json();
+beridzeInbox.transfers.some((tr) => tr.files.some((f) => f.name === 'both.bin'))
+  ? ok('and the recipient still got it in their inbox')
+  : fail('the recipient did not get a transfer that also had a link');
+
+// 2. A link with nobody chosen at all.
+const alone = path.join(work, 'alone.bin');
+const aloneBytes = crypto.randomBytes(300 * 1024);
+fs.writeFileSync(alone, aloneBytes);
+await sendFrom(jPage, { recipients: [], link: true, file: alone });
+
+const aloneField = jPage.locator('input[readonly]').first();
+await aloneField.waitFor({ timeout: 60000 });
+const aloneUrl = await aloneField.inputValue();
+/#\/d\/.{20,}$/.test(aloneUrl) ? ok('a link can be made with nobody to send to') : fail('no link', aloneUrl);
+
+// Williams, who was never a recipient of anything, can fetch it.
+const wPage2 = await (await browser.newContext()).newPage();
+await wPage2.goto(aloneUrl);
+await signIn(wPage2, 'a.williams@betlive.com');
+await wPage2.getByRole('heading', { name: /Shared files/i }).first().waitFor({ timeout: 30000 });
+
+const aloneDownload = await Promise.all([
+  wPage2.waitForEvent('download', { timeout: 60000 }),
+  wPage2.getByRole('button', { name: /^Download$/i }).last().click(),
+]).then(([d]) => d);
+const aloneSaved = path.join(work, 'alone-downloaded.bin');
+await aloneDownload.saveAs(aloneSaved);
+crypto.createHash('sha256').update(fs.readFileSync(aloneSaved)).digest('hex') ===
+crypto.createHash('sha256').update(aloneBytes).digest('hex')
+  ? ok('and a colleague can download it, byte for byte')
+  : fail('the link-only download differs from what was uploaded');
+
+// Nobody's inbox gained anything: it was addressed to nobody.
+const beridzeAfter = await (
+  await fetch(`${origin}/api/inbox`, { headers: { cookie: await cookieFor('m.beridze@betlive.com') } })
+).json();
+beridzeAfter.transfers.some((tr) => tr.files.some((f) => f.name === 'alone.bin'))
+  ? fail('a link-only transfer turned up in somebody\u2019s inbox')
+  : ok('and it is in nobody\u2019s inbox, because it was sent to nobody');
+
+// 3. Neither is refused, rather than silently doing nothing.
+await jPage.goto(`${origin}/#/send`);
+await jPage.waitForSelector('input[type="file"]', { state: 'attached', timeout: 20000 });
+await jPage.setInputFiles('input[type="file"]', alone);
+const submit = jPage.getByRole('button', { name: /^Send$/ }).last();
+(await submit.isDisabled())
+  ? ok('with no recipients and no link, Send is not offered')
+  : fail('Send was clickable with nothing to send to and no link');
 
 await browser.close();
 server.kill();

@@ -703,15 +703,19 @@ function registerHostIpc(): void {
   });
 
   ipcMain.handle('host:send', async (_event, input: unknown) => {
-    const { recipients, note, route } = (input ?? {}) as {
+    const { recipients, note, route, link } = (input ?? {}) as {
       recipients?: unknown;
       note?: unknown;
       route?: unknown;
+      link?: unknown;
     };
     const to = Array.isArray(recipients) ? recipients.filter((r): r is string => typeof r === 'string') : [];
+    const days = readLinkDays(link);
 
     if (outbox.files.length === 0) return { ok: false, error: 'There are no files to send.' };
-    if (to.length === 0) return { ok: false, error: 'Choose at least one person to send to.' };
+    if (to.length === 0 && days === null) {
+      return { ok: false, error: 'Choose at least one person to send to, or ask for a link.' };
+    }
     if (sending) return { ok: false, error: 'A transfer is already going.' };
 
     const files = [...outbox.files];
@@ -719,7 +723,10 @@ function registerHostIpc(): void {
       files,
       to,
       typeof note === 'string' ? note : '',
-      route === 'direct' ? 'direct' : 'server',
+      // A link is served from the server, so there has to be a copy there.
+      // Asking for one settles the route whatever the page requested.
+      days !== null ? 'server' : route === 'direct' ? 'direct' : 'server',
+      days,
     );
     if (result.ok) {
       outbox.clear();
@@ -1133,12 +1140,21 @@ function announceArrival(from: string, files: string[], note: string): void {
  * seconds in should still be resumable, and an orphaned record costs nothing
  * -- it is checked against the disk before anything is retried.
  */
+/** Days of link the page asked for, or null for none. */
+function readLinkDays(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === false) return null;
+  if (raw === true) return 0; // "you choose" — the server fills in its default
+  const days = Math.round(Number((raw as { days?: unknown }).days));
+  return Number.isInteger(days) && days > 0 ? days : 0;
+}
+
 async function performSend(
   files: PendingFile[],
   recipients: string[],
   note: string,
   route: Route,
-): Promise<{ ok: boolean; error?: string }> {
+  linkDays: number | null = null,
+): Promise<{ ok: boolean; error?: string; link?: string | null }> {
   const origin = settings.serverUrl;
   if (!origin) return { ok: false, error: 'No server address is set.' };
 
@@ -1146,6 +1162,7 @@ async function performSend(
   if (!cookie) return { ok: false, error: 'You are not signed in. Open BetSend, sign in, and try again.' };
 
   const link = new PeerLink(origin, cookie);
+  createdLink = null;
   writePending(PENDING_FILE, { files, recipients, note, startedAt: Date.now() });
 
   const sendable: SendableFile[] = files.map((file) => ({
@@ -1155,6 +1172,22 @@ async function performSend(
   }));
 
   try {
+    /*
+     * A link with nobody to send to is not a delivery, so there is
+     * nothing to route: deliver() is about getting files to people and
+     * returns at once when there are none. It goes straight up instead.
+     */
+    if (recipients.length === 0) {
+      const timing = await uploadAndCommit(origin, cookie, files, [], note, linkDays);
+      remember('server', timing);
+      clearPending(PENDING_FILE);
+      announce(
+        files.length === 1 ? `${files[0].name} uploaded` : `${files.length} files uploaded`,
+        'The download link is on the Send page and on Sent.',
+      );
+      return { ok: true, link: createdLink };
+    }
+
     const report = await deliver({
       route,
       recipients,
@@ -1169,7 +1202,7 @@ async function performSend(
          * files straight from this machine.
          */
         writePending(PENDING_FILE, { files, recipients: to, note: text, startedAt: Date.now() });
-        return uploadAndCommit(origin, cookie, files, to, text);
+        return uploadAndCommit(origin, cookie, files, to, text, linkDays);
       },
       onTiming: remember,
     });
@@ -1188,6 +1221,9 @@ async function performSend(
       files.length === 1 ? `${files[0].name} sent` : `${files.length} files sent`,
       describeDelivery(report),
     );
+    if (report.failed.length === 0 && createdLink) {
+      return { ok: true, link: createdLink };
+    }
     // Partly delivered is not success: the page must not clear the files
     // of somebody who still has one person to send to.
     if (report.failed.length > 0) {
@@ -1207,12 +1243,16 @@ async function performSend(
 }
 
 /** Upload to the server and commit the transfer: the original path, unchanged. */
+/** The link the last server commit produced, for handing back to the page. */
+let createdLink: string | null = null;
+
 async function uploadAndCommit(
   origin: string,
   cookie: string,
   files: PendingFile[],
   recipients: string[],
   note: string,
+  linkDays: number | null = null,
 ): Promise<Timing> {
   const startedAt = Date.now();
 
@@ -1230,12 +1270,27 @@ async function uploadAndCommit(
   const response = await fetch(`${origin.replace(/\/+$/, '')}/api/transfers`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', cookie },
-    body: JSON.stringify({ uploads, recipients, note }),
+    body: JSON.stringify({
+      uploads,
+      recipients,
+      note,
+      // 0 means "a link, you choose how long" -- the server fills in the
+      // configured default rather than this side guessing at it.
+      ...(linkDays === null ? {} : { link: linkDays === 0 ? true : { days: linkDays } }),
+    }),
   });
 
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
     throw new Error(body?.error?.message ?? `The server refused the transfer (${response.status}).`);
+  }
+
+  if (linkDays !== null) {
+    const body = (await response.json().catch(() => null)) as
+      | { transfer?: { link?: { token?: string } } }
+      | null;
+    const token = body?.transfer?.link?.token;
+    createdLink = token ? `${origin.replace(/\/+$/, '')}/#/d/${token}` : null;
   }
 
   return { bytes: files.reduce((sum, file) => sum + file.size, 0), milliseconds: Date.now() - startedAt };

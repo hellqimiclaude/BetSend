@@ -49,7 +49,13 @@ export interface HostBridge {
    * chooser, not the ability to send.
    */
   routes?(recipients: string[]): Promise<HostRoutes>;
-  send(recipients: string[], note: string, route?: 'direct' | 'server'): Promise<{ ok: boolean; error?: string }>;
+  send(
+    recipients: string[],
+    note: string,
+    route?: 'direct' | 'server',
+    /** Ask for a shareable link; forces the server route, since a link needs a copy here. */
+    link?: { days: number } | null,
+  ): Promise<{ ok: boolean; error?: string; link?: string | null }>;
   cancel(): Promise<void>;
   onStagedChanged(callback: (files: HostStagedFile[]) => void): () => void;
   onProgress(callback: (progress: HostProgress) => void): () => void;

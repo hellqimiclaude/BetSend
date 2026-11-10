@@ -18,10 +18,29 @@ import {
   type TransferRow,
 } from '../repos/transfers.js';
 import { buildTransferViews } from '../views.js';
+import { createLink } from '../repos/links.js';
 import { notifyNewTransfer, notifySender, notifyTransferGone } from '../services/notify.js';
 import { sanitizeFilename } from '../util/format.js';
 import { blobExists } from '../services/storage.js';
 import { forgetUploads } from '../repos/uploads.js';
+
+/**
+ * How many days of link the sender asked for, or null for no link.
+ *
+ * `true` means "a link, you choose how long", which is what a checkbox
+ * with no number next to it means.
+ */
+function readLinkDays(raw: unknown, settings: { linkDefaultDays: number }): number | null {
+  if (raw === undefined || raw === null || raw === false) return null;
+  if (raw === true) return settings.linkDefaultDays;
+
+  const asked = (raw ?? {}) as { days?: unknown };
+  const days = Math.round(Number(asked.days ?? settings.linkDefaultDays));
+  if (!Number.isInteger(days) || days < 1) {
+    throw badRequest('Choose how many days the link should last.', 'bad_days');
+  }
+  return days;
+}
 
 export default async function transferRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -38,6 +57,7 @@ export default async function transferRoutes(app: FastifyInstance): Promise<void
       uploads?: unknown;
       recipients?: unknown;
       note?: unknown;
+      link?: unknown;
     };
 
     const uploadIds = Array.isArray(body.uploads) ? body.uploads.map(String).filter(Boolean) : [];
@@ -47,8 +67,26 @@ export default async function transferRoutes(app: FastifyInstance): Promise<void
     // request body limit is the only ceiling on the note.
     const note = typeof body.note === 'string' ? body.note.trim() : '';
 
+    /*
+     * A link is asked for here rather than added afterwards, because a
+     * transfer with nobody to send to is only coherent if it has one --
+     * and creating the two separately would leave a window in which a
+     * transfer with no recipients and no link exists, which the
+     * delete-once-everyone-has-it sweep would quite reasonably finish on
+     * the spot.
+     */
+    const linkDays = readLinkDays(body.link, settings);
+
     if (uploadIds.length === 0) throw badRequest('Add at least one file before sending.', 'no_files');
-    if (recipientNames.length === 0) throw badRequest('Choose at least one person to send to.', 'no_recipients');
+    if (recipientNames.length === 0 && linkDays === null) {
+      throw badRequest('Choose at least one person to send to, or create a download link.', 'no_recipients');
+    }
+    if (linkDays !== null && linkDays > settings.linkMaxDays) {
+      throw badRequest(
+        `A link can last at most ${settings.linkMaxDays} days. An administrator can raise that.`,
+        'too_many_days',
+      );
+    }
 
     // Resolve recipients (deduplicated, order preserved).
     const seen = new Set<number>();
@@ -101,11 +139,23 @@ export default async function transferRoutes(app: FastifyInstance): Promise<void
     // The blobs rows now own these bytes; the in-flight reservation is over.
     forgetUploads(uploadIds);
 
-    logEvent('transfer.created', transfer.id, user.id, `${recipientIds.length} recipient(s)`);
-    notifyNewTransfer(transfer, user.name);
+    if (linkDays !== null) {
+      createLink(transfer.id, user.id, linkDays);
+      logEvent('link.created', transfer.id, user.id, `${linkDays} day(s)`);
+    }
+
+    logEvent(
+      'transfer.created',
+      transfer.id,
+      user.id,
+      recipientIds.length === 0 ? 'link only' : `${recipientIds.length} recipient(s)`,
+    );
+    // No recipients means nobody to tell. The link is the delivery.
+    if (recipientIds.length > 0) notifyNewTransfer(transfer, user.name);
 
     const [view] = buildTransferViews([transfer], {
       includeRecipients: true,
+      includeLinks: true,
       senderName: () => user.name,
     });
     return { transfer: view };

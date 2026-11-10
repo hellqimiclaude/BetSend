@@ -233,13 +233,33 @@ A transfer is normally reachable only by the people it was addressed to. That
 breaks the moment somebody goes on holiday and a colleague picks up their
 work: the stand-in was never a recipient, and never will be.
 
-A download link solves that. On the **Sent** page, choose how many days it
-should last and press **Create a link**. You get a URL to paste wherever the
-work is tracked:
+A download link solves that. Tick **Create a download link** on the Send page,
+or press **Create a link** on an existing transfer in **Sent**. Either way you
+get a URL to paste wherever the work is tracked:
 
 ```
 http://betsend-pc:8080/#/d/qd_bS8h9OXPEDCrichJXOoag9OMuYJQeBFgscXCQTWQ
 ```
+
+### Three ways to send
+
+The checkbox makes recipients optional, so there are three shapes:
+
+| What you want | Pick |
+| --- | --- |
+| Give it to named people | Choose them, leave the box unticked |
+| Give it to named people *and* have a link to paste | Choose them, tick the box |
+| Just a link, for whoever turns out to need it | Choose nobody, tick the box |
+
+The third has no recipients at all: nothing lands in anybody's Inbox, nobody
+is emailed, and the link is the whole delivery. It still appears on your
+**Sent** page, and the link is shown once on the Send page as soon as it is
+made — copy it there, or come back for it later.
+
+**Ticking the box means the files go through the server.** A link is served
+from the server, so there has to be a copy there; the Send page says so when
+the desktop app would otherwise have offered the direct route. The direct and
+through-the-server choice is unchanged for ordinary sends.
 
 **Anyone in the company with that link can download the files — but they must
 be signed in to BetSend.** That is the whole security model. A link that leaks
@@ -651,7 +671,7 @@ npm test                      # everything
 npm run test:watch -w server  # re-run on save
 ```
 
-453 tests on Node's built-in runner — no test framework to install. Each run gets a
+463 tests on Node's built-in runner — no test framework to install. Each run gets a
 throwaway SQLite database in a temp directory, so there is nothing to set up and
 nothing to clean up.
 

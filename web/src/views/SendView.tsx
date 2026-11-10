@@ -6,6 +6,7 @@ import { classNames, formatBytes, formatEta } from '../lib/format';
 import { UploadBatch, type BatchProgress } from '../lib/uploader';
 import { useHostFiles } from '../lib/useHostFiles';
 import type { HostRoutes } from '../lib/host';
+import type { TransferView } from '../types';
 import { RouteChooser } from '../components/RouteChooser';
 import { Button, Card, Chip, ProgressBar, SectionTitle } from '../components/ui';
 import { IconFile, IconPlus, IconSearch, IconUpload, IconX } from '../components/Icons';
@@ -29,6 +30,11 @@ export function SendView() {
   const [dragging, setDragging] = useState(false);
   /** Set while the chooser is open, i.e. only when there is a choice to make. */
   const [routes, setRoutes] = useState<HostRoutes | null>(null);
+  /** Whether to mint a shareable link, and for how long. */
+  const [wantLink, setWantLink] = useState(false);
+  const [linkDays, setLinkDays] = useState(() => String(bootstrap?.linkDefaultDays ?? 7));
+  /** The link just created, shown once so it can be copied. */
+  const [freshLink, setFreshLink] = useState<string | null>(null);
 
   /**
    * In the desktop app the files live in the app, not the page: a file the
@@ -45,6 +51,27 @@ export function SendView() {
 
   const maxSize = bootstrap?.maxUploadSize ?? 0;
   const busy = phase !== 'idle';
+  const maxLinkDays = bootstrap?.linkMaxDays ?? 30;
+
+  /** The button says which of the three things pressing it will do. */
+  const submitLabel =
+    selected.length === 0 && wantLink
+      ? t('send.submitLink')
+      : wantLink
+        ? t('send.submitBoth')
+        : t('send.submit');
+
+  async function copyFreshLink() {
+    if (!freshLink) return;
+    try {
+      await navigator.clipboard.writeText(freshLink);
+      toast('success', t('sent.linkCopied'));
+    } catch {
+      // Refused on an insecure origin, which a LAN server on plain http
+      // is. Selecting it leaves Ctrl+C working.
+      (document.activeElement as HTMLElement | null)?.blur();
+    }
+  }
 
   const directory = useMemo(() => users.filter((person) => person.name !== user?.name), [users, user]);
 
@@ -163,6 +190,7 @@ export function SendView() {
 
   function reset() {
     setFiles([]);
+    setWantLink(false);
     if (host) void clearHost();
     setSelected([]);
     setNote('');
@@ -174,18 +202,22 @@ export function SendView() {
 
   async function send() {
     setError(null);
+    setFreshLink(null);
     if (rows.length === 0) return setError(t('send.needFiles'));
-    if (selected.length === 0) return setError(t('send.needRecipients'));
+    // Either is enough on its own: somebody can be sent the files, or a
+    // link can be made for whoever turns out to need them.
+    if (selected.length === 0 && !wantLink) return setError(t('send.needRecipientsOrLink'));
 
     // The desktop app uploads and commits in one call: it is holding the
     // files, so there is nothing for this side to upload.
     if (host) {
       /*
-       * Ask first only when the answer can differ. If nobody picked has
-       * BetSend open there is no direct route to choose, and a dialog
-       * whose outcome is fixed is just a click somebody has to make.
+       * Ask first only when the answer can differ. A link needs the files
+       * on the server to serve them from, so asking for one settles the
+       * route and there is nothing left to choose.
        */
-      const available = host.routes ? await host.routes(selected).catch(() => null) : null;
+      const available =
+        host.routes && !wantLink ? await host.routes(selected).catch(() => null) : null;
       if (available && available.reachable.length > 0) {
         setRoutes(available);
         return;
@@ -217,9 +249,23 @@ export function SendView() {
 
     setPhase('committing');
     try {
-      await api.post('/api/transfers', { uploads: uploadIds, recipients: selected, note });
-      toast('success', t('send.success', { names: selected.join(', ') }));
+      const { transfer } = await api.post<{ transfer: TransferView }>('/api/transfers', {
+        uploads: uploadIds,
+        recipients: selected,
+        note,
+        link: wantLink ? { days: Number(linkDays) } : undefined,
+      });
+
+      toast(
+        'success',
+        selected.length > 0 ? t('send.success', { names: selected.join(', ') }) : t('send.linkReady'),
+      );
+      const token = transfer.link?.token;
       reset();
+      // After reset, so it survives the clear: the link is the only thing
+      // somebody has to take away from a send with no recipients, and
+      // losing it would mean uploading the files again.
+      if (token) setFreshLink(`${window.location.origin}/#/d/${token}`);
       void refreshSent();
       void refreshUsers();
     } catch (err) {
@@ -233,20 +279,28 @@ export function SendView() {
   /** Hand the transfer to the desktop app and report how it went. */
   async function sendByRoute(route: 'direct' | 'server') {
     if (!host) return;
+    const asked = wantLink;
     setRoutes(null);
     setPhase('uploading');
-    const result = await host.send(selected, note, route);
+    const result = await host.send(selected, note, route, asked ? { days: Number(linkDays) } : null);
     setPhase('idle');
 
     if (!result.ok) {
       setError(result.error ?? 'The transfer could not be sent.');
       return;
     }
-    toast('success', t('send.success', { names: selected.join(', ') }));
+    toast(
+      'success',
+      selected.length > 0 ? t('send.success', { names: selected.join(', ') }) : t('send.linkReady'),
+    );
     setSelected([]);
     setNote('');
     setQuery('');
     setError(null);
+    setWantLink(false);
+    // Shown after the clear, because with no recipients the link is the
+    // only thing to take away and losing it means uploading again.
+    if (result.link) setFreshLink(result.link);
     void refreshSent();
     void refreshUsers();
   }
@@ -484,6 +538,70 @@ export function SendView() {
         </Card>
       ) : null}
 
+      {/* ---- 4. a shareable link ---- */}
+      <Card className="p-4">
+        <label className="flex cursor-pointer items-start gap-3">
+          <input
+            type="checkbox"
+            checked={wantLink}
+            onChange={(event) => setWantLink(event.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-600 focus:ring-brand-500 dark:border-slate-600 dark:bg-slate-800"
+          />
+          <span className="min-w-0">
+            <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+              {/* Reads as the whole action when nobody is chosen, and as an
+                  addition when somebody is. */}
+              {selected.length === 0 ? t('send.linkWantAlone') : t('send.linkWant')}
+            </span>
+            <span className="mt-0.5 block text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+              {t('send.linkNoRecipients')}
+            </span>
+          </span>
+        </label>
+
+        {wantLink ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 pl-7">
+            <span className="text-xs text-slate-500 dark:text-slate-400">{t('send.linkDays')}</span>
+            <input
+              type="number"
+              min={1}
+              max={maxLinkDays}
+              value={linkDays}
+              onChange={(event) => setLinkDays(event.target.value)}
+              className="w-16 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm tabular-nums dark:border-slate-700 dark:bg-slate-900"
+            />
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              {t('send.linkDaysUnit')} · {t('send.linkMax', { days: maxLinkDays })}
+            </span>
+            {host ? (
+              // The route chooser will not appear, so say why before they
+              // press the button rather than leaving it a silent change.
+              <span className="w-full text-xs leading-relaxed text-amber-700 dark:text-amber-400">
+                {t('send.linkServerOnly')}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+      </Card>
+
+      {freshLink ? (
+        <Card className="animate-slide-in p-4">
+          <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{t('send.linkReady')}</p>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{t('send.linkCopyNow')}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <input
+              readOnly
+              value={freshLink}
+              onFocus={(event) => event.currentTarget.select()}
+              className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300"
+            />
+            <Button variant="ghost" className="px-2 py-1" onClick={() => void copyFreshLink()}>
+              {t('sent.linkCopy')}
+            </Button>
+          </div>
+        </Card>
+      ) : null}
+
       <div className="flex items-center gap-3 pb-8">
         {busy ? (
           <Button variant="secondary" onClick={() => void cancel()}>
@@ -493,15 +611,17 @@ export function SendView() {
         <Button
           variant="primary"
           loading={busy}
-          disabled={rows.length === 0 || selected.length === 0}
+          disabled={rows.length === 0 || (selected.length === 0 && !wantLink)}
           onClick={() => void send()}
           className="min-w-32"
         >
-          {busy ? t('send.submitting') : t('send.submit')}
+          {busy ? t('send.submitting') : submitLabel}
         </Button>
         {!busy && bootstrap ? (
           <span className="text-xs text-slate-400 dark:text-slate-500">
-            {t('send.expiresIn', { hours: bootstrap.retentionHours })}
+            {wantLink
+              ? t('sent.linkMax', { days: maxLinkDays })
+              : t('send.expiresIn', { hours: bootstrap.retentionHours })}
           </span>
         ) : null}
       </div>
